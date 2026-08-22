@@ -303,11 +303,11 @@ function Panel({ dl }) {
 }
 
 const KPIS = [
-  { key: "totPax",    label: "Totale pax",          Icon: Users,        color: "#4d8bff", sub: (s) => `su ${s.active} capigruppo` },
-  { key: "active",    label: "Capigruppo in gioco", Icon: UserCheck,    color: "#1E6BF1", sub: () => "attivi nel funnel" },
-  { key: "confirmed", label: "Confermati",          Icon: CheckCircle2, color: "#10b981", sub: (s) => `${s.convPct}% del totale` },
-  { key: "working",   label: "In lavorazione",      Icon: Clock,        color: "#f5a623", sub: () => "stadi 1–5" },
-  { key: "disdette",  label: "Disdette",            Icon: XCircle,      color: "#f0453e", sub: (s) => `${(s.active + s.disdette) ? Math.round(s.disdette / (s.active + s.disdette) * 100) : 0}% del totale` },
+  { key: "totPax",    label: "Totale pax",          Icon: Users,        color: "#4d8bff", sub: (s) => `su ${s.active} capigruppo`, jump: { stages: ACTIVE, label: "In gioco" } },
+  { key: "active",    label: "Capigruppo in gioco", Icon: UserCheck,    color: "#1E6BF1", sub: () => "attivi nel funnel", jump: { stages: ACTIVE, label: "In gioco" } },
+  { key: "confirmed", label: "Confermati",          Icon: CheckCircle2, color: "#10b981", sub: (s) => `${s.convPct}% del totale`, jump: { stage: 6 } },
+  { key: "working",   label: "In lavorazione",      Icon: Clock,        color: "#f5a623", sub: () => "stadi 1–5", jump: { stages: IN_LAV, label: "In lavorazione" } },
+  { key: "disdette",  label: "Disdette",            Icon: XCircle,      color: "#f0453e", sub: (s) => `${(s.active + s.disdette) ? Math.round(s.disdette / (s.active + s.disdette) * 100) : 0}% del totale`, jump: { stage: 7 } },
 ];
 function Dashboard({ leads, isAdmin, user, loading, go }) {
   const s = useMemo(() => computeStats(leads), [leads]);
@@ -317,12 +317,12 @@ function Dashboard({ leads, isAdmin, user, loading, go }) {
     <div className="wrap">
       <div className="kpis">
         {KPIS.map((k) => (
-          <div className="kpi" key={k.key}>
+          <button className="kpi kpi-click" key={k.key} onClick={() => go("prenotazioni", k.jump)}>
             <div className="kpi-ic" style={{ "--c": k.color }}><k.Icon size={18} /></div>
             <div className="kpi-n"><Num n={s[k.key]} /></div>
             <div className="kpi-l">{k.label}</div>
             <div className="kpi-s">{k.sub(s)}</div>
-          </div>
+          </button>
         ))}
       </div>
       <div className="grid2">
@@ -425,17 +425,19 @@ function FunnelView({ leads, isAdmin, onOpen }) {
   );
 }
 function Prenotazioni({ leads, isAdmin, initial, onOpen }) {
-  const [f, setF] = useState({ meta: "", turno: "", stage: initial?.stage ?? null, q: "" });
-  useEffect(() => { if (initial?.stage != null) setF((x) => ({ ...x, stage: initial.stage })); }, [initial]);
+  const [f, setF] = useState({ meta: "", turno: "", stage: initial?.stage ?? null, stages: initial?.stages ?? null, label: initial?.label ?? "", q: "" });
+  useEffect(() => { if (initial) setF((x) => ({ ...x, stage: initial.stage ?? null, stages: initial.stages ?? null, label: initial.label ?? "" })); }, [initial]);
   const turni = useMemo(() => [...new Set(leads.map((r) => r.turno).filter(Boolean))].sort(), [leads]);
   const rows = useMemo(() => leads.filter((r) => {
     if (f.meta && r.meta !== f.meta) return false;
     if (f.turno && r.turno !== f.turno) return false;
-    if (f.stage != null && r.stage !== f.stage) return false;
+    if (f.stages && f.stages.length) { if (!f.stages.includes(r.stage)) return false; }
+    else if (f.stage != null && r.stage !== f.stage) return false;
     if (f.q) { const q = f.q.toLowerCase(); if (!(`${r.cod} ${r.nome} ${r.can} ${r.city}`.toLowerCase().includes(q))) return false; }
     return true;
   }), [leads, f]);
-  const dirty = f.meta || f.turno || f.stage != null || f.q;
+  const dirty = f.meta || f.turno || f.stage != null || (f.stages && f.stages.length) || f.q;
+  const reset = () => setF({ meta: "", turno: "", stage: null, stages: null, label: "", q: "" });
   if (leads.length === 0) return <div className="wrap"><div className="none pad">Nessuna prenotazione.</div></div>;
   return (
     <div className="wrap">
@@ -446,9 +448,10 @@ function Prenotazioni({ leads, isAdmin, initial, onOpen }) {
           <option value="">Tutte le mete</option>{META.map((m) => <option key={m.key} value={m.key}>{m.short}</option>)}</select>
         <select value={f.turno} onChange={(e) => setF({ ...f, turno: e.target.value })}>
           <option value="">Tutti i turni</option>{turni.map((t) => <option key={t} value={t}>{t}</option>)}</select>
-        <select value={f.stage ?? ""} onChange={(e) => setF({ ...f, stage: e.target.value === "" ? null : +e.target.value })}>
+        <select value={f.stage ?? ""} onChange={(e) => setF({ ...f, stage: e.target.value === "" ? null : +e.target.value, stages: null, label: "" })}>
           <option value="">Tutti gli stati</option>{STAGES.map((st) => <option key={st.n} value={st.n}>{st.n} · {st.short}</option>)}</select>
-        {dirty && <button className="clear" onClick={() => setF({ meta: "", turno: "", stage: null, q: "" })}>Azzera</button>}
+        {f.stages && f.label && <span className="active-chip">{f.label}<button onClick={() => setF({ ...f, stages: null, label: "" })} aria-label="Rimuovi filtro"><X size={13} /></button></span>}
+        {dirty && <button className="clear" onClick={reset}>Azzera</button>}
       </div>
       <section className="card">
         <div className="card-head"><h3>{rows.length} {rows.length === 1 ? "prenotazione" : "prenotazioni"}</h3></div>
@@ -622,6 +625,14 @@ display:flex;align-items:center;justify-content:center;gap:6px;transition:transf
 .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:22px}
 .kpis.four{grid-template-columns:repeat(4,1fr)}
 .kpi{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px}
+.kpi-click{width:100%;text-align:left;cursor:pointer;transition:border-color .15s,background .15s,transform .12s,box-shadow .15s}
+.kpi-click:hover{border-color:rgba(30,107,241,.55);background:#13212f;transform:translateY(-3px);box-shadow:0 14px 30px -14px rgba(30,107,241,.55)}
+.kpi-click:hover .kpi-ic{transform:scale(1.06)}
+.kpi-click:active{transform:translateY(-1px)}
+.kpi-ic{transition:transform .15s}
+.active-chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--blue2);background:rgba(30,107,241,.14);border:1px solid rgba(30,107,241,.3);padding:8px 8px 8px 12px;border-radius:11px}
+.active-chip button{display:grid;place-items:center;color:var(--blue2);opacity:.8}
+.active-chip button:hover{opacity:1}
 .kpi-ic{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;margin-bottom:14px;color:var(--c);background:color-mix(in srgb,var(--c) 16%,transparent)}
 .kpi-n{font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1}
 .kpi-n.green{color:var(--green)}
