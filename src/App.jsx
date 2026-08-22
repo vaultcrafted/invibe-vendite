@@ -1,5 +1,5 @@
 /* IV_IMPORT */
-import React, { useState, useMemo, useEffect, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { supabase } from "./lib/supabase.js";
 import {
   LayoutDashboard, Filter, ListChecks, BarChart3, LogOut, Search, ChevronRight,
@@ -139,6 +139,62 @@ export default function App() {
 }
 function Boot() { return <div className="boot"><div className="blogo"><IVMark size={30} /></div><span>Carico…</span></div>; }
 
+// ---- animated flowing waves (canvas) ----
+function WaveCanvas() {
+  const ref = useRef(null);
+  useEffect(() => {
+    const cv = ref.current; if (!cv) return;
+    const ctx = cv.getContext("2d");
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    let w = 0, h = 0, raf = 0, t0 = 0;
+    const layers = [
+      { y: 0.30, amp: 24, wl: 560, sp: 20,  c: "77,139,255", a: 0.08, lw: 1.4, glow: 10 },
+      { y: 0.42, amp: 32, wl: 680, sp: -15, c: "30,107,241", a: 0.11, lw: 1.6, glow: 12 },
+      { y: 0.55, amp: 28, wl: 500, sp: 26,  c: "77,139,255", a: 0.10, lw: 1.5, glow: 12 },
+      { y: 0.68, amp: 40, wl: 760, sp: -19, c: "30,107,241", a: 0.14, lw: 1.8, glow: 16 },
+      { y: 0.80, amp: 34, wl: 600, sp: 22,  c: "77,139,255", a: 0.14, lw: 1.6, glow: 15 },
+      { y: 0.92, amp: 46, wl: 860, sp: -13, c: "30,107,241", a: 0.18, lw: 2.0, glow: 20 },
+    ];
+    const resize = () => {
+      const r = cv.getBoundingClientRect(); w = r.width; h = r.height;
+      cv.width = Math.max(1, w * dpr); cv.height = Math.max(1, h * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    resize(); window.addEventListener("resize", resize);
+    const drawFrame = (el) => {
+      ctx.clearRect(0, 0, w, h);
+      const step = 8;
+      ctx.globalCompositeOperation = "lighter";
+      ctx.lineJoin = "round"; ctx.lineCap = "round";
+      for (const L of layers) {
+        const baseY = h * L.y + Math.sin(el * 0.32 + L.y * 6) * 12;
+        const k = (Math.PI * 2) / L.wl, ph = el * L.sp * k;
+        ctx.beginPath();
+        for (let x = 0; x <= w + step; x += step) {
+          const yy = baseY + Math.sin(x * k + ph) * L.amp + Math.sin(x * k * 0.5 + ph * 0.7 + 1.3) * L.amp * 0.35;
+          x === 0 ? ctx.moveTo(x, yy) : ctx.lineTo(x, yy);
+        }
+        ctx.shadowColor = `rgba(${L.c},0.85)`;
+        ctx.shadowBlur = L.glow;
+        ctx.strokeStyle = `rgba(${L.c},${L.a})`;
+        ctx.lineWidth = L.lw + 0.6;
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = `rgba(158,196,255,${Math.min(0.5, L.a + 0.07)})`;
+        ctx.lineWidth = L.lw * 0.55;
+        ctx.stroke();
+      }
+      ctx.globalCompositeOperation = "source-over";
+      ctx.shadowBlur = 0;
+    };
+    if (reduce) { drawFrame(0); }
+    else { const loop = (t) => { if (!t0) t0 = t; drawFrame((t - t0) / 1000); raf = requestAnimationFrame(loop); }; raf = requestAnimationFrame(loop); }
+    return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", resize); };
+  }, []);
+  return <canvas ref={ref} className="wave-canvas" aria-hidden />;
+}
+
 // ---- LOGIN (split) ----
 function Login({ onLogin }) {
   const [email, setEmail] = useState(""); const [pw, setPw] = useState("");
@@ -155,15 +211,7 @@ function Login({ onLogin }) {
         <span className="glow g1" />
         <span className="glow g2" />
         <span className="glow g3" />
-        <div className="waves">
-          <svg viewBox="0 0 1600 260" preserveAspectRatio="none">
-            {[0, 1, 2, 3, 4, 5].map((i) => (
-              <path key={i} className="wpath" style={{ animationDelay: `${i * -1.2}s` }}
-                d={`M0 ${160 + i * 14} Q 200 ${105 + i * 14} 400 ${160 + i * 14} T 800 ${160 + i * 14} T 1200 ${160 + i * 14} T 1600 ${160 + i * 14}`}
-                fill="none" stroke="#1E6BF1" strokeWidth="1.4" opacity={0.55 - i * 0.07} />
-            ))}
-          </svg>
-        </div>
+        <WaveCanvas />
       </div>
       <div className="login-hero">
         <Wordmark />
@@ -531,11 +579,7 @@ h1,h2,h3{font-weight:600;letter-spacing:-.01em}
 .feats{list-style:none;display:flex;flex-direction:column;gap:14px;margin-bottom:20px}
 .feats li{display:flex;align-items:center;gap:12px;font-size:14px;color:#cbd6e4}
 .fic{width:30px;height:30px;border-radius:9px;background:rgba(30,107,241,.14);color:var(--blue2);display:grid;place-items:center;flex-shrink:0}
-.waves{position:absolute;left:-4%;right:-4%;bottom:-2px;height:260px;width:108%;pointer-events:none;animation:pan 22s ease-in-out infinite;will-change:transform}
-.waves svg{width:100%;height:100%}
-.wpath{animation:wob 9s ease-in-out infinite;transform-origin:center}
-@keyframes wob{0%,100%{transform:translateY(0)}50%{transform:translateY(-16px)}}
-@keyframes pan{0%,100%{transform:translateX(0)}50%{transform:translateX(-46px)}}
+.wave-canvas{position:absolute;inset:0;width:100%;height:100%}
 .login-side{position:relative;z-index:1;display:grid;place-items:center;padding:24px}
 .login-card{position:relative;width:100%;max-width:400px;background:linear-gradient(180deg,rgba(20,34,48,.9),rgba(13,26,37,.9));
 border:1px solid rgba(30,107,241,.22);border-radius:22px;padding:40px 32px 32px;box-shadow:0 30px 80px -24px rgba(0,0,0,.7);backdrop-filter:blur(8px)}
