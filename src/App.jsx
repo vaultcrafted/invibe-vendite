@@ -275,10 +275,10 @@ const NAV = [
   { key: "dashboard", label: "Dashboard", Icon: LayoutDashboard },
   { key: "funnel", label: "Funnel", Icon: Filter },
   { key: "prenotazioni", label: "Prenotazioni", Icon: ListChecks },
-  { key: "classifica", label: "Classifica", Icon: BarChart3, admin: true },
+  { key: "venditori", label: "Venditori", Icon: BarChart3, admin: true },
 ];
 function Panel({ dl }) {
-  const { user, leads, loading, logout, refresh } = dl;
+  const { user, leads, loading, logout, refresh, accounts } = dl;
   const isAdmin = user.ruolo === "admin";
   const [view, setView] = useState("dashboard");
   const [jump, setJump] = useState(null);
@@ -289,7 +289,7 @@ function Panel({ dl }) {
     dashboard: ["Dashboard", "Panoramica generale del tuo funnel"],
     funnel: ["Funnel", "Dove si trovano i tuoi capigruppo"],
     prenotazioni: ["Prenotazioni", "Tutti i clienti sul tuo codice"],
-    classifica: ["Classifica", "Performance per venditore"],
+    venditori: ["Venditori", "Quante prenotazioni ha portato ogni PR"],
   };
   return (
     <div className="shell">
@@ -322,7 +322,7 @@ function Panel({ dl }) {
           {view === "dashboard" && <Dashboard leads={leads} isAdmin={isAdmin} user={user} loading={loading} go={go} />}
           {view === "funnel" && <FunnelView leads={leads} isAdmin={isAdmin} onOpen={setSel} />}
           {view === "prenotazioni" && <Prenotazioni leads={leads} isAdmin={isAdmin} initial={jump} onOpen={setSel} />}
-          {view === "classifica" && isAdmin && <Classifica leads={leads} />}
+          {view === "venditori" && isAdmin && <Venditori leads={leads} accounts={accounts} />}
         </div>
       </main>
       {sel && <Drawer lead={sel} onClose={() => setSel(null)} />}
@@ -518,38 +518,99 @@ function Empty({ user }) {
       <div className="empty-s">Appena un cliente compila il tuo link, comparirà qui con il suo stato.</div>
     </div>);
 }
-function Classifica({ leads }) {
+function Venditori({ leads, accounts = [] }) {
+  const [sort, setSort] = useState("groups");   // groups | pax | conf
+  const [q, setQ] = useState("");
+  const [onlyActive, setOnlyActive] = useState(true);
+
   const data = useMemo(() => {
     const m = {};
-    leads.forEach((r) => { const k = r.can || "—";
-      if (!m[k]) m[k] = { code: k, groups: 0, pax: 0, conf: 0, confPax: 0 };
-      m[k].groups++; m[k].pax += r.pax; if (r.stage === 6) { m[k].conf++; m[k].confPax += r.pax; } });
-    return Object.values(m).sort((a, b) => b.confPax - a.confPax);
-  }, [leads]);
-  const max = Math.max(1, ...data.map((d) => d.confPax));
-  const tot = data.reduce((a, d) => ({ g: a.g + d.groups, p: a.p + d.pax, cp: a.cp + d.confPax }), { g: 0, p: 0, cp: 0 });
+    // seed da TUTTI i PR (anche a zero), con nome per esteso
+    accounts.filter((a) => a.ruolo !== "admin" && a.codice_pr).forEach((a) => {
+      m[a.codice_pr] = { code: a.codice_pr, nome: a.nome, canale: a.ruolo === "canale",
+        groups: 0, pax: 0, conf: 0, confPax: 0, working: 0, disdette: 0 };
+    });
+    leads.forEach((r) => {
+      const k = r.can || "—";
+      if (!m[k]) m[k] = { code: k, nome: k, canale: false, groups: 0, pax: 0, conf: 0, confPax: 0, working: 0, disdette: 0 };
+      m[k].groups++; m[k].pax += r.pax;
+      if (r.stage === 6) { m[k].conf++; m[k].confPax += r.pax; }
+      else if (r.stage === 7) m[k].disdette++;
+      else if (IN_LAV.includes(r.stage)) m[k].working++;
+    });
+    Object.values(m).forEach((d) => { d.conv = d.groups ? Math.round(d.conf / d.groups * 100) : 0; });
+    return Object.values(m);
+  }, [leads, accounts]);
+
+  const view = useMemo(() => {
+    let a = data;
+    if (onlyActive) a = a.filter((d) => d.groups > 0);
+    if (q) a = a.filter((d) => `${d.code} ${d.nome}`.toLowerCase().includes(q.toLowerCase()));
+    const key = sort === "pax" ? "pax" : sort === "conf" ? "conf" : "groups";
+    return [...a].sort((x, y) => y[key] - x[key] || y.groups - x.groups);
+  }, [data, sort, q, onlyActive]);
+
+  const maxG = Math.max(1, ...data.map((d) => d.groups));
+  const tot = data.reduce((a, d) => ({ g: a.g + d.groups, p: a.p + d.pax, c: a.c + d.conf }), { g: 0, p: 0, c: 0 });
+  const attivi = data.filter((d) => d.groups > 0).length;
+
   return (
     <div className="wrap">
       <div className="kpis four">
-        <div className="kpi"><div className="kpi-n"><Num n={tot.g} /></div><div className="kpi-l">Capigruppo totali</div></div>
+        <div className="kpi"><div className="kpi-n"><Num n={attivi} /></div><div className="kpi-l">PR con prenotazioni</div><div className="kpi-s">su {data.length} totali</div></div>
+        <div className="kpi"><div className="kpi-n"><Num n={tot.g} /></div><div className="kpi-l">Prenotazioni totali</div><div className="kpi-s">capigruppo</div></div>
         <div className="kpi"><div className="kpi-n"><Num n={tot.p} /></div><div className="kpi-l">Pax totali</div></div>
-        <div className="kpi"><div className="kpi-n green"><Num n={tot.cp} /></div><div className="kpi-l">Pax confermati</div></div>
-        <div className="kpi"><div className="kpi-n"><Num n={data.length} /></div><div className="kpi-l">Codici attivi</div></div>
+        <div className="kpi"><div className="kpi-n green"><Num n={tot.c} /></div><div className="kpi-l">Confermate</div><div className="kpi-s">{tot.g ? Math.round(tot.c / tot.g * 100) : 0}% del totale</div></div>
       </div>
+
+      <div className="toolbar">
+        <div className="search"><Search size={15} /><input placeholder="Cerca PR per nome o codice…"
+          value={q} onChange={(e) => setQ(e.target.value)} /></div>
+        <select value={sort} onChange={(e) => setSort(e.target.value)}>
+          <option value="groups">Ordina: prenotazioni</option>
+          <option value="pax">Ordina: pax</option>
+          <option value="conf">Ordina: confermate</option>
+        </select>
+        <button className={`toggle ${onlyActive ? "on" : ""}`} onClick={() => setOnlyActive(!onlyActive)}>
+          {onlyActive ? "Solo chi ha prenotato" : "Tutti i PR"}
+        </button>
+      </div>
+
+      <div className="vlegend">
+        <span><i style={{ background: "#10b981" }} />Confermate</span>
+        <span><i style={{ background: "#f5a623" }} />In lavorazione</span>
+        <span><i style={{ background: "#f0453e" }} />Disdette</span>
+      </div>
+
       <section className="card">
-        <div className="card-head"><h3>Venditori per pax confermati</h3></div>
-        <div className="rk-list">
-          {data.map((d, i) => (
-            <div className="rk-row" key={d.code}>
-              <span className="rk-pos">{i + 1}</span>
-              <span className="chip-badge sm">{d.code}</span>
-              <div className="rk-bar"><span style={{ width: `${d.confPax / max * 100}%` }} /></div>
-              <div className="rk-nums"><b><Num n={d.confPax} /></b><em>pax conf.</em>
-                <span className="rk-sub">{d.conf}/{d.groups} gruppi</span></div>
-            </div>))}
+        <div className="vlist">
+          {view.map((d, i) => (
+            <div className={`vrow ${d.groups === 0 ? "zero" : ""}`} key={d.code}>
+              <span className="vrank">{i + 1}</span>
+              <div className="vavatar">{initials(d.nome)}</div>
+              <div className="vid">
+                <div className="vname">{d.nome}{d.canale && <span className="vtag">canale</span>}</div>
+                <span className="chip-badge sm">{d.code}</span>
+              </div>
+              <div className="vbar" title={`${d.conf} confermate · ${d.working} in lavorazione · ${d.disdette} disdette`}>
+                <div className="vseg" style={{ width: `${d.conf / maxG * 100}%`, background: "#10b981" }} />
+                <div className="vseg" style={{ width: `${d.working / maxG * 100}%`, background: "#f5a623" }} />
+                <div className="vseg" style={{ width: `${d.disdette / maxG * 100}%`, background: "#f0453e" }} />
+              </div>
+              <div className="vgroups"><b><Num n={d.groups} /></b><span>prenotaz.</span></div>
+              <div className="vpax"><b><Num n={d.pax} /></b><span>pax</span></div>
+              <div className="vconv">{d.conv}%<span>conv.</span></div>
+            </div>
+          ))}
+          {view.length === 0 && <div className="none pad">Nessun PR con questi filtri.</div>}
         </div>
       </section>
-    </div>);
+    </div>
+  );
+}
+function initials(name) {
+  const p = (name || "").trim().split(/\s+/);
+  return ((p[0]?.[0] || "") + (p[1]?.[0] || "")).toUpperCase() || "—";
 }
 function Drawer({ lead, onClose }) {
   const s = stageOf(lead.stage);
@@ -755,6 +816,31 @@ display:flex;align-items:center;justify-content:center;gap:6px;transition:transf
 .rk-bar span{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--green));border-radius:99px;transition:width .8s cubic-bezier(.2,.7,.2,1)}
 .rk-nums{text-align:right;min-width:120px}.rk-nums b{font-size:18px;font-weight:700}.rk-nums em{font-style:normal;font-size:10px;color:var(--faint);margin-left:4px}
 .rk-sub{display:block;font-size:11px;color:var(--faint);margin-top:2px}
+.toggle{background:var(--panel);border:1px solid var(--line);color:var(--muted);border-radius:11px;padding:10px 14px;font-size:13px;font-weight:500}
+.toggle.on{border-color:rgba(30,107,241,.4);color:var(--blue2);background:rgba(30,107,241,.1)}
+.vlegend{display:flex;gap:18px;margin:2px 2px 14px;font-size:12px;color:var(--muted)}
+.vlegend span{display:flex;align-items:center;gap:6px}
+.vlegend i{width:10px;height:10px;border-radius:3px;display:inline-block}
+.vlist{display:flex;flex-direction:column}
+.vrow{display:grid;grid-template-columns:34px 40px minmax(0,1.3fr) 2fr 84px 64px 62px;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--line)}
+.vrow:last-child{border-bottom:none}
+.vrow.zero{opacity:.5}
+.vrank{font-family:var(--mono);font-size:14px;font-weight:700;color:var(--faint)}
+.vavatar{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;font-size:13px;font-weight:700;color:var(--blue2);background:rgba(30,107,241,.14);border:1px solid rgba(30,107,241,.22)}
+.vid{min-width:0}
+.vname{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:7px;margin-bottom:4px}
+.vtag{font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);background:rgba(255,255,255,.06);border-radius:5px;padding:2px 5px}
+.vbar{height:12px;background:rgba(255,255,255,.05);border-radius:99px;overflow:hidden;display:flex}
+.vseg{height:100%;transition:width .8s cubic-bezier(.2,.7,.2,1)}
+.vseg:first-child{border-radius:99px 0 0 99px}
+.vgroups,.vpax,.vconv{text-align:right;line-height:1.1}
+.vgroups b,.vpax b{font-size:19px;font-weight:700}
+.vconv{font-size:16px;font-weight:700;color:var(--green)}
+.vgroups span,.vpax span,.vconv span{display:block;font-size:10px;color:var(--faint);font-weight:400;margin-top:2px}
+@media(max-width:820px){
+.vrow{grid-template-columns:28px 1fr auto auto;gap:10px;row-gap:8px}
+.vavatar,.vbar{display:none}
+.vpax{display:none}}
 .drawer-scrim{position:fixed;inset:0;background:rgba(4,9,14,.6);backdrop-filter:blur(3px);z-index:30;display:flex;justify-content:flex-end;animation:fade .18s ease}
 @keyframes fade{from{opacity:0}to{opacity:1}}
 .drawer{width:min(400px,92vw);background:linear-gradient(180deg,var(--panel),#0c1824);border-left:1px solid var(--line);padding:24px 26px;overflow-y:auto;animation:slide .24s cubic-bezier(.2,.7,.2,1)}
