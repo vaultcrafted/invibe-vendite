@@ -80,6 +80,7 @@ function useDataLayer() {
   const [user, setUser] = useState(null);
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [accounts, setAccounts] = useState([]);
 
   const mapRow = (r) => ({
     cod: r.cod, nome: r.nome, pax: r.pax || 0, meta: r.meta, turno: r.turno, can: r.canale,
@@ -98,6 +99,10 @@ function useDataLayer() {
 
   useEffect(() => {
     (async () => {
+      try {
+        const { data } = await supabase.rpc("venditori_lista_login");
+        if (Array.isArray(data)) setAccounts(data);
+      } catch {}
       try {
         const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
         if (saved?.token) {
@@ -124,7 +129,7 @@ function useDataLayer() {
     localStorage.removeItem(STORE_KEY); setUser(null); setLeads([]);
   };
   const refresh = () => user && fetchLeads(user.token);
-  return { booting, user, leads, loading, login, logout, refresh };
+  return { booting, user, leads, loading, accounts, login, logout, refresh };
 }
 /* <<<DATA_LAYER_END>>> */
 
@@ -133,7 +138,7 @@ export default function App() {
   return (
     <>
       <StyleTag />
-      {dl.booting ? <Boot /> : dl.user ? <Panel dl={dl} /> : <Login onLogin={dl.login} />}
+      {dl.booting ? <Boot /> : dl.user ? <Panel dl={dl} /> : <Login onLogin={dl.login} accounts={dl.accounts} />}
     </>
   );
 }
@@ -196,15 +201,19 @@ function WaveCanvas() {
 }
 
 // ---- LOGIN (split) ----
-function Login({ onLogin }) {
+function Login({ onLogin, accounts = [] }) {
   const [email, setEmail] = useState(""); const [pw, setPw] = useState("");
   const [err, setErr] = useState(""); const [busy, setBusy] = useState(false); const [hint, setHint] = useState(false);
+  const [q, setQ] = useState("");
   const submit = async () => { if (busy) return; setBusy(true); setErr(""); const e = await onLogin(email.trim(), pw); setBusy(false); if (e) setErr(e); };
   const onKey = (ev) => ev.key === "Enter" && submit();
+  const pick = (a) => { setEmail(a.email); setPw("invibe"); setErr(""); };
   const feats = [
     [Activity, "Dati in tempo reale"], [ShieldCheck, "Prenotazioni sempre sotto controllo"],
     [TrendingUp, "Performance del funnel"], [Zap, "Gestione semplice e veloce"],
   ];
+  const filtered = accounts.filter((a) =>
+    !q || `${a.codice_pr || ""} ${a.nome || ""} ${a.email}`.toLowerCase().includes(q.toLowerCase()));
   return (
     <div className="login">
       <div className="login-bg" aria-hidden>
@@ -223,20 +232,39 @@ function Login({ onLogin }) {
         </ul>
       </div>
       <div className="login-side">
-        <div className="login-card">
-          <div className="lc-logo"><IVMark size={26} onBlue /></div>
-          <h2>Accedi al tuo account</h2>
-          <label className="fld"><span>Email</span>
-            <input value={email} onChange={(e) => { setEmail(e.target.value); setErr(""); }} onKeyDown={onKey}
-              placeholder="nome@invibe.it" type="email" autoComplete="username" /></label>
-          <label className="fld"><span>Password</span>
-            <input value={pw} onChange={(e) => { setPw(e.target.value); setErr(""); }} onKeyDown={onKey}
-              placeholder="••••••••" type="password" autoComplete="current-password" /></label>
-          <button className="linkbtn" onClick={() => setHint(!hint)}>Password dimenticata?</button>
-          {hint && <div className="hint">La password la assegna l'ufficio. Scrivi a ufficio@invibe.it.</div>}
-          {err && <div className="login-err">{err}</div>}
-          <button className="btn-primary" onClick={submit} disabled={busy}>
-            {busy ? "Accesso…" : <>Entra <ChevronRight size={17} /></>}</button>
+        <div className="login-stack">
+          <div className="login-card">
+            <div className="lc-logo"><IVMark size={26} onBlue /></div>
+            <h2>Accedi al tuo account</h2>
+            <label className="fld"><span>Email</span>
+              <input value={email} onChange={(e) => { setEmail(e.target.value); setErr(""); }} onKeyDown={onKey}
+                placeholder="nome@invibe.it" type="email" autoComplete="username" /></label>
+            <label className="fld"><span>Password</span>
+              <input value={pw} onChange={(e) => { setPw(e.target.value); setErr(""); }} onKeyDown={onKey}
+                placeholder="••••••••" type="password" autoComplete="current-password" /></label>
+            <button className="linkbtn" onClick={() => setHint(!hint)}>Password dimenticata?</button>
+            {hint && <div className="hint">La password la assegna l'ufficio. Scrivi a ufficio@invibe.it.</div>}
+            {err && <div className="login-err">{err}</div>}
+            <button className="btn-primary" onClick={submit} disabled={busy}>
+              {busy ? "Accesso…" : <>Entra <ChevronRight size={17} /></>}</button>
+          </div>
+
+          {accounts.length > 0 && (
+            <div className="quick">
+              <div className="quick-head">Accesso rapido — tocca un account per compilarlo</div>
+              <div className="quick-search"><Search size={14} />
+                <input placeholder="Filtra nome o codice…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+              <div className="quick-list">
+                {filtered.map((a) => (
+                  <button key={a.email} className="qchip" title={a.email} onClick={() => pick(a)}>
+                    <span className="qcode">{a.codice_pr || "ALL"}</span>
+                    <span className="qname">{a.nome || a.email}</span>
+                  </button>
+                ))}
+                {filtered.length === 0 && <div className="quick-none">Nessun account.</div>}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -599,6 +627,18 @@ border:1px solid rgba(30,107,241,.22);border-radius:22px;padding:40px 32px 32px;
 .btn-primary{width:100%;background:var(--blue);color:#fff;font-weight:600;font-size:15px;padding:13px;border-radius:12px;
 display:flex;align-items:center;justify-content:center;gap:6px;transition:transform .12s,background .15s}
 .btn-primary:hover{background:#1657ce}.btn-primary:active{transform:translateY(1px)}.btn-primary:disabled{opacity:.6}
+.login-stack{width:100%;max-width:400px;display:flex;flex-direction:column;gap:14px}
+.login-stack .login-card{max-width:none}
+.quick{background:linear-gradient(180deg,rgba(20,34,48,.7),rgba(13,26,37,.7));border:1px solid var(--line);border-radius:16px;padding:14px;backdrop-filter:blur(8px)}
+.quick-head{font-size:11px;color:var(--faint);letter-spacing:.02em;margin-bottom:10px}
+.quick-search{display:flex;align-items:center;gap:7px;background:#0a141d;border:1px solid var(--line);border-radius:10px;padding:0 10px;color:var(--faint);margin-bottom:10px}
+.quick-search input{background:none;border:none;color:var(--ink);padding:8px 0;font-size:13px;width:100%;outline:none}
+.quick-list{display:flex;flex-wrap:wrap;gap:6px;max-height:172px;overflow-y:auto}
+.qchip{display:inline-flex;align-items:center;gap:7px;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:9px;padding:6px 9px;transition:border-color .13s,background .13s;max-width:100%}
+.qchip:hover{border-color:rgba(30,107,241,.5);background:#13212f}
+.qcode{font-family:var(--mono);font-size:10px;font-weight:700;color:var(--blue2);flex-shrink:0}
+.qname{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.quick-none{font-size:12px;color:var(--faint);padding:6px}
 .shell{display:flex;min-height:100dvh}
 .side{width:236px;flex-shrink:0;background:var(--bg2);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:22px 16px;position:sticky;top:0;height:100dvh}
 .side-top{padding:4px 8px 22px}
