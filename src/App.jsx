@@ -522,6 +522,7 @@ function Venditori({ leads, accounts = [] }) {
   const [sort, setSort] = useState("groups");   // groups | pax | conf
   const [q, setQ] = useState("");
   const [onlyActive, setOnlyActive] = useState(true);
+  const [selected, setSelected] = useState(null);   // codice PR aperto nel dettaglio
 
   const data = useMemo(() => {
     const m = {};
@@ -585,7 +586,8 @@ function Venditori({ leads, accounts = [] }) {
       <section className="card">
         <div className="vlist">
           {view.map((d, i) => (
-            <div className={`vrow ${d.groups === 0 ? "zero" : ""}`} key={d.code}>
+            <button className={`vrow ${d.groups === 0 ? "zero" : ""}`} key={d.code}
+              onClick={() => d.groups > 0 && setSelected(d.code)} disabled={d.groups === 0}>
               <span className="vrank">{i + 1}</span>
               <div className="vavatar">{initials(d.nome)}</div>
               <div className="vid">
@@ -600,11 +602,99 @@ function Venditori({ leads, accounts = [] }) {
               <div className="vgroups"><b><Num n={d.groups} /></b><span>prenotaz.</span></div>
               <div className="vpax"><b><Num n={d.pax} /></b><span>pax</span></div>
               <div className="vconv">{d.conv}%<span>conv.</span></div>
-            </div>
+              {d.groups > 0 && <ChevronRight size={16} className="vchev" />}
+            </button>
           ))}
           {view.length === 0 && <div className="none pad">Nessun PR con questi filtri.</div>}
         </div>
       </section>
+
+      {selected && (
+        <VenditoreDetail
+          info={data.find((d) => d.code === selected)}
+          leads={leads.filter((r) => r.can === selected)}
+          onClose={() => setSelected(null)}
+        />
+      )}
+    </div>
+  );
+}
+function VenditoreDetail({ info, leads, onClose }) {
+  useEffect(() => { const h = (e) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); }, [onClose]);
+  if (!info) return null;
+
+  const byStage = STAGES.map((s) => ({ ...s, n: s.n, count: leads.filter((r) => r.stage === s.n).length,
+    pax: leads.filter((r) => r.stage === s.n).reduce((a, r) => a + r.pax, 0) })).filter((s) => s.count > 0);
+  const byMeta = Object.values(leads.reduce((m, r) => {
+    const k = r.meta || "—"; if (!m[k]) m[k] = { meta: k, count: 0, pax: 0 };
+    m[k].count++; m[k].pax += r.pax; return m; }, {})).sort((a, b) => b.count - a.count);
+  const rows = [...leads].sort((a, b) => (b.stage === 6) - (a.stage === 6) || b.pax - a.pax);
+
+  return (
+    <div className="drawer-scrim" onClick={onClose}>
+      <aside className="drawer wide" onClick={(e) => e.stopPropagation()}>
+        <header className="vd-head">
+          <div className="vd-id">
+            <div className="vavatar lg">{initials(info.nome)}</div>
+            <div>
+              <div className="vd-name">{info.nome}{info.canale && <span className="vtag">canale</span>}</div>
+              <span className="chip-badge">{info.code}</span>
+            </div>
+          </div>
+          <button className="x" onClick={onClose}><X size={18} /></button>
+        </header>
+
+        <div className="vd-stats">
+          <div className="vd-stat"><b><Num n={info.groups} /></b><span>prenotazioni</span></div>
+          <div className="vd-stat"><b><Num n={info.pax} /></b><span>pax totali</span></div>
+          <div className="vd-stat"><b className="green"><Num n={info.conf} /></b><span>confermate</span></div>
+          <div className="vd-stat"><b className="green">{info.conv}%</b><span>conversione</span></div>
+        </div>
+
+        <div className="vd-sub">
+          <div className="vd-mini"><b>{info.working}</b><span>in lavorazione</span></div>
+          <div className="vd-mini"><b>{info.disdette}</b><span>disdette</span></div>
+          <div className="vd-mini"><b><Num n={info.confPax} /></b><span>pax confermati</span></div>
+        </div>
+
+        <section className="vd-block">
+          <h4>Per stato</h4>
+          {byStage.map((s) => (
+            <div className="vd-line" key={s.n}>
+              <span className="vd-dot" style={{ background: s.color }} />
+              <span className="vd-line-label">{s.label}</span>
+              <span className="vd-line-val">{s.count} <em>· {s.pax} pax</em></span>
+            </div>
+          ))}
+        </section>
+
+        <section className="vd-block">
+          <h4>Per destinazione</h4>
+          {byMeta.map((m) => (
+            <div className="vd-line" key={m.meta}>
+              <span className="vd-line-label">{m.meta}</span>
+              <span className="vd-line-val">{m.count} <em>· {m.pax} pax</em></span>
+            </div>
+          ))}
+        </section>
+
+        <section className="vd-block">
+          <h4>Prenotazioni ({rows.length})</h4>
+          <div className="vd-rows">
+            {rows.map((r) => { const st = stageOf(r.stage); return (
+              <div className="vd-row" key={r.cod}>
+                <div className="vd-row-main">
+                  <span className="vd-row-nome">{r.nome || r.cod}</span>
+                  <span className="vd-row-meta">{r.meta}{r.turno ? ` · ${r.turno}` : ""}{r.city && r.city !== "-" ? ` · ${r.city}` : ""}</span>
+                </div>
+                <span className="vd-row-pax">{r.pax} pax</span>
+                <span className="vd-badge" style={{ color: st.color, borderColor: st.color + "55", background: st.color + "18" }}>{st.short}</span>
+              </div>
+            ); })}
+          </div>
+        </section>
+      </aside>
     </div>
   );
 }
@@ -837,10 +927,41 @@ display:flex;align-items:center;justify-content:center;gap:6px;transition:transf
 .vgroups b,.vpax b{font-size:19px;font-weight:700}
 .vconv{font-size:16px;font-weight:700;color:var(--green)}
 .vgroups span,.vpax span,.vconv span{display:block;font-size:10px;color:var(--faint);font-weight:400;margin-top:2px}
+.vrow{width:100%;text-align:left;background:transparent;cursor:pointer;transition:background .12s}
+.vrow:hover:not(.zero){background:rgba(255,255,255,.03)}
+.vrow.zero{cursor:default}
+.vchev{color:var(--faint);justify-self:end}
 @media(max-width:820px){
 .vrow{grid-template-columns:28px 1fr auto auto;gap:10px;row-gap:8px}
-.vavatar,.vbar{display:none}
+.vavatar,.vbar,.vchev{display:none}
 .vpax{display:none}}
+.drawer.wide{width:min(560px,96vw)}
+.vd-head{display:flex;align-items:flex-start;justify-content:space-between;padding:22px 22px 16px;border-bottom:1px solid var(--line)}
+.vd-id{display:flex;gap:14px;align-items:center}
+.vavatar.lg{width:52px;height:52px;border-radius:14px;font-size:17px}
+.vd-name{font-size:19px;font-weight:700;display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.vd-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:18px 22px 6px}
+.vd-stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;text-align:center}
+.vd-stat b{display:block;font-size:22px;font-weight:700;line-height:1}
+.vd-stat span{display:block;font-size:10px;color:var(--faint);margin-top:5px}
+.vd-sub{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:8px 22px 6px}
+.vd-mini{text-align:center;padding:8px}
+.vd-mini b{display:block;font-size:16px;font-weight:700}
+.vd-mini span{display:block;font-size:10px;color:var(--faint);margin-top:3px}
+.vd-block{padding:16px 22px;border-top:1px solid var(--line)}
+.vd-block h4{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 12px}
+.vd-line{display:flex;align-items:center;gap:10px;padding:7px 0;font-size:14px}
+.vd-dot{width:9px;height:9px;border-radius:3px;flex:none}
+.vd-line-label{flex:1;color:var(--text)}
+.vd-line-val{font-weight:600;font-variant-numeric:tabular-nums}
+.vd-line-val em{color:var(--faint);font-weight:400;font-style:normal;font-size:12px}
+.vd-rows{display:flex;flex-direction:column;gap:8px;max-height:340px;overflow:auto}
+.vd-row{display:flex;align-items:center;gap:10px;padding:9px 11px;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+.vd-row-main{flex:1;min-width:0}
+.vd-row-nome{display:block;font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vd-row-meta{display:block;font-size:11px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vd-row-pax{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;flex:none}
+.vd-badge{font-size:10px;font-weight:700;padding:3px 8px;border-radius:20px;border:1px solid;flex:none}
 .drawer-scrim{position:fixed;inset:0;background:rgba(4,9,14,.6);backdrop-filter:blur(3px);z-index:30;display:flex;justify-content:flex-end;animation:fade .18s ease}
 @keyframes fade{from{opacity:0}to{opacity:1}}
 .drawer{width:min(400px,92vw);background:linear-gradient(180deg,var(--panel),#0c1824);border-left:1px solid var(--line);padding:24px 26px;overflow-y:auto;animation:slide .24s cubic-bezier(.2,.7,.2,1)}
