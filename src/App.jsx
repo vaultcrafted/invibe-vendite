@@ -151,6 +151,20 @@ function Login({ onLogin }) {
   ];
   return (
     <div className="login">
+      <div className="login-bg" aria-hidden>
+        <span className="glow g1" />
+        <span className="glow g2" />
+        <span className="glow g3" />
+        <div className="waves">
+          <svg viewBox="0 0 1600 260" preserveAspectRatio="none">
+            {[0, 1, 2, 3, 4, 5].map((i) => (
+              <path key={i} className="wpath" style={{ animationDelay: `${i * -1.2}s` }}
+                d={`M0 ${160 + i * 14} Q 200 ${105 + i * 14} 400 ${160 + i * 14} T 800 ${160 + i * 14} T 1200 ${160 + i * 14} T 1600 ${160 + i * 14}`}
+                fill="none" stroke="#1E6BF1" strokeWidth="1.4" opacity={0.55 - i * 0.07} />
+            ))}
+          </svg>
+        </div>
+      </div>
       <div className="login-hero">
         <Wordmark />
         <div className="eyebrow">Benvenuto su Invibe</div>
@@ -159,14 +173,6 @@ function Login({ onLogin }) {
         <ul className="feats">
           {feats.map(([Ic, t]) => <li key={t}><span className="fic"><Ic size={15} /></span>{t}</li>)}
         </ul>
-        <div className="waves" aria-hidden>
-          <svg viewBox="0 0 800 200" preserveAspectRatio="none">
-            {[0, 1, 2, 3, 4].map((i) => (
-              <path key={i} d={`M0 ${120 + i * 12} Q 200 ${70 + i * 12} 400 ${120 + i * 12} T 800 ${120 + i * 12}`}
-                fill="none" stroke="#1E6BF1" strokeWidth="1.3" opacity={0.5 - i * 0.08} />
-            ))}
-          </svg>
-        </div>
       </div>
       <div className="login-side">
         <div className="login-card">
@@ -508,9 +514,16 @@ h1,h2,h3{font-weight:600;letter-spacing:-.01em}
 .wordmark{display:flex;align-items:center;gap:9px;font-weight:700;letter-spacing:.16em;font-size:15px}
 .boot{min-height:100dvh;display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:center;color:var(--muted);font-size:13px}
 .blogo,.lc-logo{width:52px;height:52px;border-radius:16px;background:var(--blue);display:grid;place-items:center;box-shadow:0 8px 26px -6px rgba(30,107,241,.7)}
-.login{min-height:100dvh;display:grid;grid-template-columns:1.05fr .95fr}
-.login-hero{position:relative;overflow:hidden;padding:56px 60px;display:flex;flex-direction:column;
-background:radial-gradient(1200px 500px at 10% -10%,rgba(30,107,241,.22),transparent 60%),linear-gradient(160deg,#0a1420,#070d14)}
+.login{position:relative;min-height:100dvh;display:grid;grid-template-columns:1.05fr .95fr;overflow:hidden;background:linear-gradient(160deg,#0a1420,#060b12)}
+.login-bg{position:absolute;inset:0;z-index:0;overflow:hidden;pointer-events:none}
+.glow{position:absolute;border-radius:50%;filter:blur(50px);background:radial-gradient(circle,rgba(30,107,241,.55),transparent 62%);will-change:transform}
+.glow.g1{width:760px;height:760px;top:-280px;left:-180px;opacity:.5;animation:drift1 19s ease-in-out infinite}
+.glow.g2{width:640px;height:640px;bottom:-260px;right:-140px;opacity:.34;animation:drift2 23s ease-in-out infinite}
+.glow.g3{width:520px;height:520px;top:35%;left:45%;opacity:.20;background:radial-gradient(circle,rgba(77,139,255,.5),transparent 62%);animation:drift3 27s ease-in-out infinite}
+@keyframes drift1{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(140px,90px) scale(1.14)}}
+@keyframes drift2{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-110px,-80px) scale(1.1)}}
+@keyframes drift3{0%,100%{transform:translate(0,0)}50%{transform:translate(-90px,60px)}}
+.login-hero{position:relative;z-index:1;padding:56px 60px;display:flex;flex-direction:column}
 .login-hero .wordmark{margin-bottom:auto}
 .eyebrow{color:var(--blue2);font-size:12px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;margin:40px 0 16px}
 .login-hero h1{font-size:44px;line-height:1.05;letter-spacing:-.03em}
@@ -518,12 +531,16 @@ background:radial-gradient(1200px 500px at 10% -10%,rgba(30,107,241,.22),transpa
 .feats{list-style:none;display:flex;flex-direction:column;gap:14px;margin-bottom:20px}
 .feats li{display:flex;align-items:center;gap:12px;font-size:14px;color:#cbd6e4}
 .fic{width:30px;height:30px;border-radius:9px;background:rgba(30,107,241,.14);color:var(--blue2);display:grid;place-items:center;flex-shrink:0}
-.waves{position:absolute;left:0;right:0;bottom:-2px;height:200px;pointer-events:none}
+.waves{position:absolute;left:-4%;right:-4%;bottom:-2px;height:260px;width:108%;pointer-events:none;animation:pan 22s ease-in-out infinite;will-change:transform}
 .waves svg{width:100%;height:100%}
-.login-side{display:grid;place-items:center;padding:24px;background:var(--bg)}
+.wpath{animation:wob 9s ease-in-out infinite;transform-origin:center}
+@keyframes wob{0%,100%{transform:translateY(0)}50%{transform:translateY(-16px)}}
+@keyframes pan{0%,100%{transform:translateX(0)}50%{transform:translateX(-46px)}}
+.login-side{position:relative;z-index:1;display:grid;place-items:center;padding:24px}
 .login-card{position:relative;width:100%;max-width:400px;background:linear-gradient(180deg,rgba(20,34,48,.9),rgba(13,26,37,.9));
 border:1px solid rgba(30,107,241,.22);border-radius:22px;padding:40px 32px 32px;box-shadow:0 30px 80px -24px rgba(0,0,0,.7);backdrop-filter:blur(8px)}
-.lc-logo{margin:-64px auto 18px;width:56px;height:56px}
+.lc-logo{margin:-64px auto 18px;width:56px;height:56px;animation:pulse 3.6s ease-in-out infinite}
+@keyframes pulse{0%,100%{box-shadow:0 8px 26px -6px rgba(30,107,241,.7)}50%{box-shadow:0 10px 46px 0 rgba(30,107,241,.95)}}
 .login-card h2{text-align:center;font-size:20px;margin-bottom:24px}
 .fld{display:block;margin-bottom:15px}
 .fld span{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
