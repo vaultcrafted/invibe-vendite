@@ -467,7 +467,7 @@ function RowList({ rows, isAdmin, onOpen, dense }) {
       {rows.slice(0, 300).map((r, i) => {
         const st = stageOf(r.stage);
         return (
-          <button key={r.cod + i} className={`row ${dense ? "dense" : ""}`} onClick={() => onOpen(r)}>
+          <button key={r.cod + i} className={`row ${dense ? "dense" : ""} ${isAdmin ? "adm" : ""}`} onClick={() => onOpen(r)}>
             <span className="cod">{r.cod}</span>
             <span className="rnome">{r.nome || "—"}</span>
             <span className="chips"><span className="chip">{metaShort(r.meta)}</span>
@@ -663,11 +663,12 @@ display:flex;align-items:center;justify-content:center;gap:6px;transition:transf
 .fpax{font-size:11px;color:var(--faint);margin-top:4px}
 .rows{display:flex;flex-direction:column}
 .row{display:grid;grid-template-columns:96px 1fr auto auto auto 15px;align-items:center;gap:14px;padding:13px 20px;border-bottom:1px solid var(--line);text-align:left;transition:background .12s}
+.row.adm{grid-template-columns:96px minmax(0,1fr) auto auto auto auto 15px}
 .row.dense{padding:11px 20px}
 .row:last-child{border-bottom:none}.row:hover{background:rgba(255,255,255,.03)}
 .cod{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--muted)}
 .cod.big{font-size:16px;color:var(--blue2)}
-.rnome{font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rnome{font-size:14px;font-weight:500;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chips{display:flex;gap:6px}
 .chip{font-size:10.5px;font-weight:600;letter-spacing:.04em;color:var(--muted);background:rgba(255,255,255,.05);border-radius:6px;padding:3px 7px}
 .chip.ghost{background:none;border:1px solid var(--line);color:var(--faint)}
@@ -726,13 +727,14 @@ display:flex;align-items:center;justify-content:center;gap:6px;transition:transf
 .dr-grid dt{font-size:11px;color:var(--faint);margin-bottom:3px}.dr-grid dd{font-size:15px;font-weight:500}
 .dr-note{margin-top:20px;font-size:12px;color:var(--faint);line-height:1.5;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:11px;padding:12px 14px}
 @media(max-width:1080px){.kpis{grid-template-columns:repeat(3,1fr)}.grid2,.grid2.f{grid-template-columns:1fr}.grid3{grid-template-columns:1fr}}
-@media(max-width:900px){.login{grid-template-columns:1fr}.login-hero{display:none}.login-side{min-height:100dvh}}
+@media(max-width:900px){.login{grid-template-columns:1fr}.login-hero{display:none}.login-side{min-height:100dvh}
+.row.adm{grid-template-columns:96px 1fr auto auto auto 15px}.row.adm .rcan{display:none}}
 @media(max-width:720px){
 .side{position:fixed;bottom:0;top:auto;left:0;right:0;width:100%;height:auto;flex-direction:row;border-right:none;border-top:1px solid var(--line);padding:8px;z-index:20;justify-content:space-around}
 .side-top,.side-bottom .ucard{display:none}.side-nav{flex-direction:row;flex:none;gap:2px}
 .snav span{display:none}.side-bottom{flex-direction:row;border:none;padding:0}
 .main{padding-bottom:70px}.wrap{padding:18px 16px 30px}.top{padding:18px 16px 14px}
-.kpis{grid-template-columns:1fr 1fr}.row{grid-template-columns:80px 1fr auto auto;gap:10px}.row .chips,.row .rcan,.row .rgo{display:none}
+.kpis{grid-template-columns:1fr 1fr}.row,.row.adm{grid-template-columns:80px 1fr auto auto;gap:10px}.row .chips,.row .rcan,.row .rgo{display:none}
 .rk-row{grid-template-columns:26px 54px 1fr auto}.rk-bar{display:none}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 `;
