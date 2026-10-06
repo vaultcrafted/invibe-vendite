@@ -222,6 +222,8 @@ function Login({ onLogin, accounts = [] }) {
   const [email, setEmail] = useState(""); const [pw, setPw] = useState("");
   const [err, setErr] = useState(""); const [busy, setBusy] = useState(false); const [hint, setHint] = useState(false);
   const [q, setQ] = useState("");
+  // elenco account solo in modalita prova: aggiungi ?demo all'indirizzo
+  const demo = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("demo");
   const submit = async () => { if (busy) return; setBusy(true); setErr(""); const e = await onLogin(email.trim(), pw); setBusy(false); if (e) setErr(e); };
   const onKey = (ev) => ev.key === "Enter" && submit();
   const pick = (a) => { setEmail(a.email); setPw("invibe"); setErr(""); };
@@ -257,7 +259,7 @@ function Login({ onLogin, accounts = [] }) {
             {hint && <div className="hint">La password la assegna l'ufficio: scrivi a ufficio@invibe.it.</div>}
           </div>
 
-          {accounts.length > 0 && (
+          {demo && accounts.length > 0 && (
             <div className="quick">
               <div className="quick-head">Accesso rapido</div>
               <div className="quick-search"><Search size={14} />
