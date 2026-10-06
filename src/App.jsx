@@ -4,7 +4,7 @@ import { supabase } from "./lib/supabase.js";
 import {
   Home, Filter, ListChecks, Trophy, LogOut, Search, ChevronRight, X, RefreshCw,
   MapPin, CalendarDays, BellRing, Users, Crown, ArrowRight, Sparkles,
-  UserRound, KeyRound, Copy, Check, Plus, Phone, AtSign, Mail, ShieldCheck, MessageCircle, Lock, TrendingUp, Medal,
+  UserRound, KeyRound, Copy, Check, Plus, History, Eye, LogIn, ShieldAlert, PenLine, FolderOpen, Phone, AtSign, Mail, ShieldCheck, MessageCircle, Lock, TrendingUp, Medal,
 } from "lucide-react";
 
 /* ============================================================
@@ -208,6 +208,7 @@ function useDataLayer() {
     return null;
   };
   const logout = async () => {
+    try { if (user?.ruolo !== "admin") await supabase.rpc("venditore_traccia", { p_token: user?.token, p_tipo: "uscita", p_dettaglio: {} }); } catch {}
     try { await supabase.rpc("venditore_logout", { p_token: user?.token }); } catch {}
     localStorage.removeItem(STORE_KEY); setUser(null); setLeads([]); setAccounts([]); setLastSync(null);
   };
@@ -281,9 +282,10 @@ function Login({ onLogin }) {
 const NAV = [
   { key: "dashboard", label: "Home", Icon: Home },
   { key: "funnel", label: "Funnel", Icon: Filter },
-  { key: "prenotazioni", label: "Prenotazioni", Icon: ListChecks },
-  { key: "venditori", label: "Venditori", Icon: Trophy, admin: true },
+  { key: "prenotazioni", label: "Prenotazioni", short: "Gruppi", Icon: ListChecks },
+  { key: "venditori", label: "Venditori", short: "PR", Icon: Trophy, admin: true },
   { key: "utenze", label: "Utenze", Icon: KeyRound, admin: true },
+  { key: "cronologia", label: "Cronologia", short: "Storico", Icon: History, admin: true },
   { key: "profilo", label: "Profilo", Icon: UserRound, noTab: true },
 ];
 function Panel({ dl }) {
@@ -302,6 +304,10 @@ function Panel({ dl }) {
   const [jump, setJump] = useState(null);
   const [sel, setSel] = useState(null);
   const go = (v, opts) => { setJump(opts || null); setView(v); window.scrollTo?.({ top: 0 }); };
+  // la cronologia dell'ufficio registra cosa guardano i PR (non l'ufficio)
+  const traccia = dl.api;
+  useEffect(() => { if (!isAdmin) traccia("venditore_traccia", { p_tipo: "vista", p_dettaglio: { pagina: view } }); }, [view, isAdmin, traccia]);
+  const apri = (r) => { setSel(r); if (!isAdmin) traccia("venditore_traccia", { p_tipo: "scheda", p_dettaglio: { cod: r.cod, gruppo: r.nome } }); };
   const items = NAV.filter((n) => !n.admin || isAdmin);
   const titles = {
     dashboard: isAdmin ? "Panoramica" : "La tua stagione",
@@ -309,6 +315,7 @@ function Panel({ dl }) {
     prenotazioni: "Prenotazioni",
     venditori: "Venditori",
     utenze: "Utenze PR",
+    cronologia: "Cronologia",
     profilo: isAdmin ? "Il tuo profilo" : "La tua area",
   };
   return (
@@ -358,19 +365,20 @@ function Panel({ dl }) {
               <span>Controlla lo script "Sync Vendite Invibe" (account bobo.invibe) → Esecuzioni: l'ultimo aggiornamento è del {lastSync.toLocaleString("it-IT", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}.</span>
             </div>
           )}
-          {view === "dashboard" && <Dashboard leads={leads} isAdmin={isAdmin} user={user} loading={loading} go={go} onOpen={setSel} stagione={stag} accounts={accounts} />}
-          {view === "funnel" && <FunnelView leads={leads} isAdmin={isAdmin} onOpen={setSel} />}
-          {view === "prenotazioni" && <Prenotazioni leads={leads} isAdmin={isAdmin} initial={jump} onOpen={setSel} />}
+          {view === "dashboard" && <Dashboard leads={leads} isAdmin={isAdmin} user={user} loading={loading} go={go} onOpen={apri} stagione={stag} accounts={accounts} />}
+          {view === "funnel" && <FunnelView leads={leads} isAdmin={isAdmin} onOpen={apri} />}
+          {view === "prenotazioni" && <Prenotazioni leads={leads} isAdmin={isAdmin} initial={jump} onOpen={apri} />}
           {view === "venditori" && isAdmin && <Venditori leads={leads} accounts={accounts} />}
+          {view === "cronologia" && isAdmin && <Cronologia api={dl.api} accounts={accounts} leads={allLeads} onOpen={apri} />}
           {view === "utenze" && isAdmin && <Utenze api={dl.api} onChange={dl.reloadAccounts} me={user} />}
-          {view === "profilo" && <Profilo user={user} leads={leads} isAdmin={isAdmin} stagione={stag} api={dl.api} updateUser={dl.updateUser} logout={logout} onOpen={setSel} go={go} />}
+          {view === "profilo" && <Profilo user={user} leads={leads} isAdmin={isAdmin} stagione={stag} api={dl.api} updateUser={dl.updateUser} logout={logout} onOpen={apri} go={go} />}
         </div>
       </main>
 
       <nav className="tabbar">
         {items.filter((n) => !n.noTab).map(({ key, label, Icon }) => (
           <button key={key} className={`tab ${view === key ? "on" : ""}`} onClick={() => go(key)}>
-            <Icon size={20} /><span>{label}</span></button>
+            <Icon size={20} /><span>{(isAdmin && NAV.find((n) => n.key === key).short) || label}</span></button>
         ))}
       </nav>
       {sel && <LeadSheet lead={sel} isAdmin={isAdmin} onClose={() => setSel(null)} />}
@@ -1201,6 +1209,137 @@ function UtenzaSheet({ u, api, me, onClose, onSaved }) {
   );
 }
 
+/* ---------------- CRONOLOGIA (ufficio) ---------------- */
+const CATEGORIE = [
+  [null, "Tutto"], ["accessi", "Accessi"], ["navigazione", "Cosa guardano"], ["vendite", "Vendite"], ["profilo", "Profilo e password"], ["ufficio", "Ufficio"],
+];
+const CAT_STILE = {
+  accessi: { Icon: LogIn, bg: "#E3EEFF", fg: "#1247B1" },
+  navigazione: { Icon: Eye, bg: "#F1F5F9", fg: "#475569" },
+  vendite: { Icon: TrendingUp, bg: "#DCFCE7", fg: "#166534" },
+  profilo: { Icon: PenLine, bg: "#FCE7F3", fg: "#9D174D" },
+  ufficio: { Icon: KeyRound, bg: "#FFEDD5", fg: "#9A3412" },
+  allarme: { Icon: ShieldAlert, bg: "#FEE2E2", fg: "#991B1B" },
+};
+const PAGINE = { dashboard: "la Home", funnel: "il Funnel", prenotazioni: "le prenotazioni", profilo: "la sua area personale" };
+function giornoLabel(d) {
+  const oggi = new Date(); oggi.setHours(0, 0, 0, 0);
+  const g = new Date(d); g.setHours(0, 0, 0, 0);
+  const diff = Math.round((oggi - g) / GIORNO);
+  if (diff === 0) return "Oggi";
+  if (diff === 1) return "Ieri";
+  return d.toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long" });
+}
+function frase(e) {
+  const chi = <b>{e.nome || e.codice_pr || "Utenza eliminata"}</b>;
+  const d = e.dettaglio || {};
+  const campi = (d.campi || []).join(", ");
+  switch (e.tipo) {
+    case "accesso": return <>{chi} è entrato nell'app{d.provvisoria ? " con la password provvisoria" : ""}</>;
+    case "apertura": return <>{chi} ha aperto l'app</>;
+    case "uscita": return <>{chi} è uscito dall'app</>;
+    case "accesso_fallito": return <>{chi} ha provato a entrare con la password sbagliata</>;
+    case "accesso_bloccato": return <>{chi} ha provato a entrare ma la sua utenza è disattivata</>;
+    case "vista": return <>{chi} ha guardato {PAGINE[d.pagina] || d.pagina}</>;
+    case "scheda": return <>{chi} ha aperto il gruppo <b className="tl-cap">{d.gruppo || ""}</b> <span className="tl-cod">{d.cod}</span></>;
+    case "profilo": return <>{chi} ha aggiornato {campi || "il profilo"}</>;
+    case "password_cambiata": return d.primo_accesso ? <>{chi} ha scelto la sua password (primo accesso)</> : <>{chi} ha cambiato la password</>;
+    case "utenza_creata": return <>{e.autore || "L'ufficio"} ha creato l'utenza di {chi}{d.codice ? ` (${d.codice})` : ""}</>;
+    case "utenza_modificata": return <>{e.autore || "L'ufficio"} ha modificato {campi} di {chi}</>;
+    case "utenza_disattivata": return <>{e.autore || "L'ufficio"} ha disattivato l'utenza di {chi}</>;
+    case "utenza_riattivata": return <>{e.autore || "L'ufficio"} ha riattivato l'utenza di {chi}</>;
+    case "password_generata": return <>{e.autore || "L'ufficio"} ha generato una nuova password per {chi}</>;
+    case "vendita_nuova": return <>Nuova prenotazione di {chi}: <b className="tl-cap">{d.gruppo}</b> · {d.pax} pax · {metaInfo(d.meta).short}</>;
+    case "vendita_stato": return <>{chi}: <b className="tl-cap">{d.gruppo}</b> passa da {stageOf(d.da).short.toLowerCase()} a <b>{stageOf(d.a).short.toLowerCase()}</b></>;
+    default: return <>{chi}: {e.tipo}</>;
+  }
+}
+function Cronologia({ api, accounts = [], leads = [], onOpen }) {
+  const [cat, setCat] = useState(null);
+  const [cod, setCod] = useState("");
+  const [items, setItems] = useState(null);
+  const [more, setMore] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [rie, setRie] = useState(null);
+  const LIM = 80;
+  const load = useCallback(async (prima) => {
+    setBusy(true);
+    const d = await api("cronologia_lista", { p_prima: prima || null, p_codice: cod || null, p_categoria: cat, p_limite: LIM });
+    const rows = Array.isArray(d) ? d : [];
+    setItems((old) => (prima ? [...(old || []), ...rows] : rows));
+    setMore(rows.length === LIM);
+    setBusy(false);
+  }, [api, cat, cod]);
+  useEffect(() => { setItems(null); load(null); }, [load]);
+  useEffect(() => { api("cronologia_riepilogo").then((d) => d && !d.error && setRie(d)); }, [api]);
+  const perCod = useMemo(() => { const m = {}; leads.forEach((r) => { m[r.cod] = r; }); return m; }, [leads]);
+  const persone = useMemo(() => accounts.filter((a) => a.codice_pr).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")), [accounts]);
+  const gruppi = useMemo(() => {
+    const out = [];
+    (items || []).forEach((e) => {
+      const d = new Date(e.quando); const k = d.toDateString();
+      if (!out.length || out[out.length - 1].k !== k) out.push({ k, label: giornoLabel(d), rows: [] });
+      out[out.length - 1].rows.push(e);
+    });
+    return out;
+  }, [items]);
+  return (
+    <div className="stack">
+      {rie && (
+        <div className="kpis">
+          <div className="kpi"><b><Num n={rie.pr_oggi} /></b><span>PR entrati oggi</span></div>
+          <div className="kpi"><b><Num n={rie.pr_7gg} /></b><span>PR attivi negli ultimi 7 giorni</span></div>
+          <div className="kpi"><b className="tx-green"><Num n={rie.vendite_oggi} /></b><span>movimenti vendite oggi</span></div>
+          <div className="kpi"><b style={rie.fallimenti_7gg ? { color: "var(--red)" } : null}><Num n={rie.fallimenti_7gg} /></b><span>accessi falliti in 7 giorni</span></div>
+        </div>
+      )}
+      <div className="filters">
+        <div className="stage-tabs">
+          {CATEGORIE.map(([k, l]) => (
+            <button key={l} className={`stab ${cat === k ? "on" : ""}`} onClick={() => setCat(k)}>{l}</button>
+          ))}
+        </div>
+        <div className="frow">
+          <select value={cod} onChange={(e) => setCod(e.target.value)} aria-label="Filtra per PR">
+            <option value="">Tutti i PR e l'ufficio</option>
+            {persone.map((a) => <option key={a.codice_pr} value={a.codice_pr}>{a.nome} · {a.codice_pr}</option>)}
+          </select>
+          <button className="toggle" onClick={() => { setItems(null); load(null); }}><RefreshCw size={13} className={busy ? "spin" : ""} /> Aggiorna</button>
+        </div>
+      </div>
+      {items === null ? <div className="none pad">Carico la cronologia…</div> : items.length === 0 ? (
+        <div className="empty">
+          <span className="empty-ic"><History size={24} /></span>
+          <h3>Ancora niente da vedere</h3>
+          <p>Da oggi qui compare tutto quello che fanno i PR nell'app e ogni movimento delle loro prenotazioni.</p>
+        </div>
+      ) : (
+        <section className="card tl">
+          {gruppi.map((g) => (
+            <div key={g.k} className="tl-day">
+              <h4 className="tl-dlabel">{g.label}</h4>
+              {g.rows.map((e, i) => {
+                const st = CAT_STILE[e.tipo === "accesso_fallito" || e.tipo === "accesso_bloccato" ? "allarme" : e.categoria] || CAT_STILE.navigazione;
+                const lead = e.dettaglio?.cod && perCod[e.dettaglio.cod];
+                const Tag = lead ? "button" : "div";
+                return (
+                  <Tag key={i} className={`tl-row ${lead ? "click" : ""}`} onClick={lead ? () => onOpen(lead) : undefined}>
+                    <span className="tl-time">{oraIt(new Date(e.quando))}</span>
+                    <span className="tl-ic" style={{ background: st.bg, color: st.fg }}><st.Icon size={15} /></span>
+                    <span className="tl-txt">{frase(e)}</span>
+                    {e.tipo.startsWith("vendita") && <StagePill n={e.dettaglio?.a} />}
+                  </Tag>
+                );
+              })}
+            </div>
+          ))}
+          {more && <button className="btn-out" disabled={busy} onClick={() => load(items[items.length - 1].quando)}>{busy ? "Carico…" : "Carica le precedenti"}</button>}
+        </section>
+      )}
+    </div>
+  );
+}
+
 /* ---------------- SHEETS ---------------- */
 function Sheet({ onClose, wide, children }) {
   useEffect(() => {
@@ -1733,6 +1872,20 @@ select.season{appearance:none;-webkit-appearance:none;padding-right:28px;cursor:
 .cred-btns .btn-primary{margin:0}
 .btn-wa{display:flex;align-items:center;justify-content:center;gap:8px;background:#16A34A;color:#fff;font-weight:700;font-size:15px;padding:14px;border-radius:14px;text-decoration:none}
 .cred-note{font-size:12px;color:var(--oink);font-weight:600}
+
+/* cronologia */
+.tl{padding:6px 18px 18px}
+.tl-day+.tl-day{margin-top:6px}
+.tl-dlabel{position:sticky;top:76px;z-index:2;background:var(--surface);font-size:12px;font-weight:800;color:var(--muted);text-transform:capitalize;padding:14px 4px 8px;letter-spacing:.02em}
+.tl-row{display:flex;align-items:center;gap:12px;padding:9px 6px;border-radius:12px;width:100%;position:relative}
+.tl-row.click:hover{background:var(--bg)}
+.tl-row+.tl-row::before{content:"";position:absolute;left:68px;top:-9px;height:18px;width:2px;background:var(--line)}
+.tl-time{width:40px;flex-shrink:0;font-size:12px;font-weight:700;color:var(--faint);text-align:right}
+.tl-ic{width:30px;height:30px;border-radius:10px;display:grid;place-items:center;flex-shrink:0}
+.tl-txt{flex:1;min-width:0;font-size:14px;line-height:1.4;color:var(--muted)}
+.tl-txt b{color:var(--ink);font-weight:700}
+.tl-cap{text-transform:capitalize}
+.tl-cod{font-size:11px;font-weight:700;color:var(--faint)}
 /* responsive */
 @media(max-width:1280px){.dash{grid-template-columns:1fr}.rail{position:static;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));align-items:start}}
 @media(max-width:1100px){.kpis{grid-template-columns:repeat(2,1fr)}}
@@ -1780,6 +1933,8 @@ select.season{appearance:none;-webkit-appearance:none;padding-right:28px;cursor:
 .prank-n{font-size:60px}
 .ubar{flex-wrap:wrap}.btn-new{padding:12px 18px;width:100%;justify-content:center}
 .ustate em{display:none}
+.tl{padding:4px 10px 12px}.tl-dlabel{top:62px}.tl-row{align-items:flex-start;gap:9px}.tl-time{width:34px;padding-top:7px}.tl-row .spill{display:none}.tl-row+.tl-row::before{left:58px}
+.tab{font-size:10px;padding:7px 2px}
 }
 @media(max-width:420px){.hero-top{flex-direction:column}.hero-month{flex-direction:row;align-items:baseline;gap:8px;width:100%;justify-content:center}.row-meta .tchip.pr{display:none}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
