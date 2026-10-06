@@ -53,6 +53,9 @@ function parseData(d) {
   const t = Date.parse(d || ""); return isNaN(t) ? null : new Date(t);
 }
 const meseKey = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}`;
+// Stagione = estate in cui si viaggia. Le vendite partono a settembre/ottobre:
+// una richiesta da settembre in poi conta per l'estate dell'anno dopo.
+const stagioneDi = (r) => { const dt = parseData(r.data); return dt ? (dt.getMonth() >= 8 ? dt.getFullYear() + 1 : dt.getFullYear()) : null; };
 
 function computeStats(leads) {
   const byStage = {}; STAGES.forEach((s) => (byStage[s.n] = { groups: 0, pax: 0 }));
@@ -284,8 +287,17 @@ const NAV = [
   { key: "venditori", label: "Venditori", Icon: Trophy, admin: true },
 ];
 function Panel({ dl }) {
-  const { user, leads, loading, logout, refresh, accounts } = dl;
+  const { user, leads: allLeads, loading, logout, refresh, accounts } = dl;
   const isAdmin = user.ruolo === "admin";
+  const stagioni = useMemo(() => {
+    const s = new Set(allLeads.map(stagioneDi).filter(Boolean));
+    if (!s.size) s.add(new Date().getMonth() >= 8 ? new Date().getFullYear() + 1 : new Date().getFullYear());
+    return [...s].sort((a, b) => b - a);
+  }, [allLeads]);
+  const [stagione, setStagione] = useState(null);
+  const stag = stagioni.includes(stagione) ? stagione : stagioni[0];
+  // le richieste senza data restano nella stagione più recente
+  const leads = useMemo(() => allLeads.filter((r) => (stagioneDi(r) ?? stagioni[0]) === stag), [allLeads, stag, stagioni]);
   const [view, setView] = useState("dashboard");
   const [jump, setJump] = useState(null);
   const [sel, setSel] = useState(null);
@@ -323,14 +335,19 @@ function Panel({ dl }) {
             <h1 className="top-h">{titles[view]}</h1>
           </div>
           <div className="top-right">
-            <span className="code-badge">{isAdmin ? "Tutti i codici" : (user.codice_pr || "—")}</span>
+            {stagioni.length > 1 ? (
+              <select className="season" value={stag} onChange={(e) => setStagione(+e.target.value)} aria-label="Stagione">
+                {stagioni.map((s) => <option key={s} value={s}>Estate {s}</option>)}
+              </select>
+            ) : <span className="season static">Estate {stag}</span>}
+            <span className="code-badge hide-mob">{isAdmin ? "Tutti i codici" : (user.codice_pr || "—")}</span>
             <button className="icon-btn" onClick={refresh} aria-label="Aggiorna">
               <RefreshCw size={16} className={loading ? "spin" : ""} /></button>
             <button className="icon-btn mob-only" onClick={logout} aria-label="Esci"><LogOut size={16} /></button>
           </div>
         </header>
         <div className="content">
-          {view === "dashboard" && <Dashboard leads={leads} isAdmin={isAdmin} user={user} loading={loading} go={go} onOpen={setSel} />}
+          {view === "dashboard" && <Dashboard leads={leads} isAdmin={isAdmin} user={user} loading={loading} go={go} onOpen={setSel} stagione={stag} />}
           {view === "funnel" && <FunnelView leads={leads} isAdmin={isAdmin} onOpen={setSel} />}
           {view === "prenotazioni" && <Prenotazioni leads={leads} isAdmin={isAdmin} initial={jump} onOpen={setSel} />}
           {view === "venditori" && isAdmin && <Venditori leads={leads} accounts={accounts} />}
@@ -349,7 +366,7 @@ function Panel({ dl }) {
 }
 
 /* ---------------- DASHBOARD ---------------- */
-function Dashboard({ leads, isAdmin, user, loading, go, onOpen }) {
+function Dashboard({ leads, isAdmin, user, loading, go, onOpen, stagione }) {
   const s = useMemo(() => computeStats(leads), [leads]);
   const months = useMemo(() => computeMonths(leads), [leads]);
   const latest = useMemo(() => sortRecent(leads).slice(0, 6), [leads]);
@@ -366,11 +383,19 @@ function Dashboard({ leads, isAdmin, user, loading, go, onOpen }) {
             <div className="hero-n"><Num n={s.active} /><span>prenotazioni attive</span></div>
             <div className="hero-sub"><Num n={s.totPax} /> pax in gioco · {s.convPct}% confermate</div>
           </div>
-          <div className="hero-month">
-            <span>{MESI_LUNGHI[now.getMonth()]}</span>
-            <b><Num n={thisMonth?.groups || 0} /></b>
-            <em>nuove questo mese</em>
-          </div>
+          {stagione === (now.getMonth() >= 8 ? now.getFullYear() + 1 : now.getFullYear()) ? (
+            <div className="hero-month">
+              <span>{MESI_LUNGHI[now.getMonth()]}</span>
+              <b><Num n={thisMonth?.groups || 0} /></b>
+              <em>nuove questo mese</em>
+            </div>
+          ) : (
+            <div className="hero-month past">
+              <span>Estate {stagione}</span>
+              <b><Num n={s.confPax} /></b>
+              <em>pax confermati</em>
+            </div>
+          )}
         </div>
         <div className="hero-stats">
           <button onClick={() => go("prenotazioni", { stage: 6 })}><b><Num n={s.confirmed} /></b><span>confermate</span></button>
@@ -884,6 +909,8 @@ h1,h2,h3,h4{letter-spacing:-.02em}
 .top-h{font-size:26px;font-weight:800}
 .top-right{display:flex;align-items:center;gap:8px}
 .code-badge{display:inline-block;font-size:11px;font-weight:800;letter-spacing:.04em;color:var(--violet);background:var(--vsoft);padding:6px 11px;border-radius:999px;white-space:nowrap}
+.season{font-size:12px;font-weight:800;color:var(--oink);background:var(--osoft);border:none;border-radius:999px;padding:7px 12px;white-space:nowrap}
+select.season{appearance:none;-webkit-appearance:none;padding-right:28px;cursor:pointer;background:var(--osoft) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239A3412' stroke-width='3' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 10px center}
 .icon-btn{width:38px;height:38px;border-radius:12px;background:var(--surface);border:1px solid var(--line);display:grid;place-items:center;color:var(--muted);transition:color .14s,border-color .14s}
 .icon-btn:hover{color:var(--violet);border-color:var(--line2)}
 .mob-only{display:none}
@@ -902,6 +929,7 @@ h1,h2,h3,h4{letter-spacing:-.02em}
 .hero-n span{font-size:15px;font-weight:600;letter-spacing:0;color:#DDD6FE}
 .hero-sub{font-size:13px;color:#DDD6FE;margin-top:8px;font-weight:500}
 .hero-month{background:var(--orange);border-radius:18px;padding:12px 16px;min-width:120px;text-align:center;display:flex;flex-direction:column}
+.hero-month.past{background:rgba(255,255,255,.14)}
 .hero-month span{font-size:11px;font-weight:700;text-transform:capitalize;color:#FFEDD5}
 .hero-month b{font-size:32px;font-weight:800;line-height:1.1}
 .hero-month em{font-style:normal;font-size:11px;font-weight:600;color:#FFEDD5}
