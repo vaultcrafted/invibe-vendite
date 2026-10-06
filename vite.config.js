@@ -12,8 +12,8 @@ export default defineConfig({
         name: 'Invibe Vendite',
         short_name: 'Vendite',
         description: 'Pannello controllo venditori Invibe',
-        theme_color: '#5B21B6',
-        background_color: '#F6F4FB',
+        theme_color: '#1E6BF1',
+        background_color: '#F2F6FC',
         display: 'standalone',
         orientation: 'portrait',
         icons: [
