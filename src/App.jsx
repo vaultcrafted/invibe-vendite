@@ -90,6 +90,16 @@ function computeMonths(leads) {
   }
   return out.slice(-12);
 }
+// da quanti giorni il gruppo è nello stato attuale. Se non lo sappiamo (fermo da prima
+// che registrassimo i cambi, 6 ott 2026) usiamo la data della richiesta: "almeno N giorni".
+const GIORNO = 86400000;
+function giorniFermo(r) {
+  if (r.stageDal) return { gg: Math.max(0, Math.floor((Date.now() - new Date(r.stageDal).getTime()) / GIORNO)), almeno: false };
+  const d = parseData(r.data);
+  return d ? { gg: Math.max(0, Math.floor((Date.now() - d.getTime()) / GIORNO)), almeno: true } : null;
+}
+const testoFermo = (g) => !g ? "" : g.gg === 0 ? "da oggi" : `da ${g.almeno ? "almeno " : ""}${g.gg} ${g.gg === 1 ? "giorno" : "giorni"}`;
+const oraIt = (d) => d.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
 const sortRecent = (rows) => [...rows].sort((a, b) => (parseData(b.data)?.getTime() || 0) - (parseData(a.data)?.getTime() || 0));
 
 function useCountUp(target, dur = 550) {
@@ -154,11 +164,13 @@ function useDataLayer() {
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(false);
   const [accounts, setAccounts] = useState([]);
+  const [lastSync, setLastSync] = useState(null);
 
   const mapRow = (r) => ({
     cod: r.cod, nome: r.nome, pax: r.pax || 0, meta: r.meta, turno: r.turno, can: r.canale,
     stage: r.stage == null ? 0 : r.stage, stato: r.stato,
     city: r.citta && r.citta !== "\\-" ? r.citta : "", data: r.data_richiesta,
+    stageDal: r.stage_dal || null,
   });
 
   const fetchAccounts = useCallback(async (token, ruolo) => {
@@ -175,6 +187,10 @@ function useDataLayer() {
     setLoading(false);
     if (error) return { error: error.message };
     setLeads((data || []).map(mapRow));
+    try {
+      const { data: ts } = await supabase.rpc("vendite_ultimo_sync", { p_token: token });
+      setLastSync(ts ? new Date(ts) : null);
+    } catch {}
     return { ok: true };
   }, []);
 
@@ -203,10 +219,10 @@ function useDataLayer() {
   };
   const logout = async () => {
     try { await supabase.rpc("venditore_logout", { p_token: user?.token }); } catch {}
-    localStorage.removeItem(STORE_KEY); setUser(null); setLeads([]); setAccounts([]);
+    localStorage.removeItem(STORE_KEY); setUser(null); setLeads([]); setAccounts([]); setLastSync(null);
   };
   const refresh = () => user && fetchLeads(user.token);
-  return { booting, user, leads, loading, accounts, login, logout, refresh };
+  return { booting, user, leads, loading, accounts, lastSync, login, logout, refresh };
 }
 /* <<<DATA_LAYER_END>>> */
 
@@ -271,7 +287,7 @@ const NAV = [
   { key: "venditori", label: "Venditori", Icon: Trophy, admin: true },
 ];
 function Panel({ dl }) {
-  const { user, leads: allLeads, loading, logout, refresh, accounts } = dl;
+  const { user, leads: allLeads, loading, logout, refresh, accounts, lastSync } = dl;
   const isAdmin = user.ruolo === "admin";
   const stagioni = useMemo(() => {
     const s = new Set(allLeads.map(stagioneDi).filter(Boolean));
@@ -316,7 +332,10 @@ function Panel({ dl }) {
         <header className="top">
           <div className="top-left">
             <span className="top-logo"><span className="logo-tile sm"><IVMark size={16} /></span></span>
-            <h1 className="top-h">{titles[view]}</h1>
+            <div className="top-titles">
+              <h1 className="top-h">{titles[view]}</h1>
+              {lastSync && <span className="top-sync">Dati aggiornati alle {oraIt(lastSync)}</span>}
+            </div>
           </div>
           <div className="top-right">
             {stagioni.length > 1 ? (
@@ -331,6 +350,12 @@ function Panel({ dl }) {
           </div>
         </header>
         <div className="content">
+          {isAdmin && lastSync && Date.now() - lastSync.getTime() > 60 * 60000 && (
+            <div className="sync-alert" role="alert">
+              <b>Il Bloccaposti non si aggiorna da {Math.round((Date.now() - lastSync.getTime()) / 3600000)} ore.</b>
+              <span>Controlla lo script "Sync Vendite Invibe" (account bobo.invibe) → Esecuzioni: l'ultimo aggiornamento è del {lastSync.toLocaleString("it-IT", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}.</span>
+            </div>
+          )}
           {view === "dashboard" && <Dashboard leads={leads} isAdmin={isAdmin} user={user} loading={loading} go={go} onOpen={setSel} stagione={stag} />}
           {view === "funnel" && <FunnelView leads={leads} isAdmin={isAdmin} onOpen={setSel} />}
           {view === "prenotazioni" && <Prenotazioni leads={leads} isAdmin={isAdmin} initial={jump} onOpen={setSel} />}
@@ -354,6 +379,10 @@ function Dashboard({ leads, isAdmin, user, loading, go, onOpen, stagione }) {
   const s = useMemo(() => computeStats(leads), [leads]);
   const months = useMemo(() => computeMonths(leads), [leads]);
   const latest = useMemo(() => sortRecent(leads).slice(0, 6), [leads]);
+  const piuFermo = useMemo(() => {
+    const g = leads.filter((r) => DA_SOLLECITARE.includes(r.stage)).map(giorniFermo).filter(Boolean);
+    return g.length ? g.reduce((a, b) => (b.gg > a.gg ? b : a)) : null;
+  }, [leads]);
   if (leads.length === 0 && !loading) return <Empty user={user} />;
   const first = (user.nome || "").split(" ")[0];
   const now = new Date(); const thisKey = meseKey(now);
@@ -392,7 +421,7 @@ function Dashboard({ leads, isAdmin, user, loading, go, onOpen, stagione }) {
         <button className="nudge" onClick={() => go("prenotazioni", { stages: DA_SOLLECITARE, label: "Da sollecitare" })}>
           <span className="nudge-ic"><BellRing size={18} /></span>
           <span className="nudge-t"><b>{s.sollecitare} {s.sollecitare === 1 ? "gruppo da sollecitare" : "gruppi da sollecitare"}</b>
-            <em>hanno bloccato il posto ma non hanno ancora inviato la pratica</em></span>
+            <em>hanno bloccato il posto ma non hanno ancora inviato la pratica{piuFermo && piuFermo.gg > 0 ? ` · il più vecchio è fermo ${testoFermo(piuFermo)}` : ""}</em></span>
           <ChevronRight size={18} />
         </button>
       )}
@@ -508,14 +537,15 @@ function Prenotazioni({ leads, isAdmin, initial, onOpen }) {
   const [f, setF] = useState(fromJump(initial));
   useEffect(() => { if (initial) setF(fromJump(initial)); }, [initial]);
   const turni = useMemo(() => [...new Set(leads.map((r) => r.turno).filter(Boolean))].sort(), [leads]);
-  const rows = useMemo(() => sortRecent(leads.filter((r) => {
+  const perFermo = f.label === "Da sollecitare";
+  const rows = useMemo(() => (perFermo ? (a) => [...a].sort((x, y) => (giorniFermo(y)?.gg ?? -1) - (giorniFermo(x)?.gg ?? -1)) : sortRecent)(leads.filter((r) => {
     if (f.meta && normMeta(r.meta) !== f.meta) return false;
     if (f.turno && r.turno !== f.turno) return false;
     if (f.stages && f.stages.length) { if (!f.stages.includes(r.stage)) return false; }
     else if (f.stage != null && r.stage !== f.stage) return false;
     if (f.q) { const q = f.q.toLowerCase(); if (!(`${r.cod} ${r.nome} ${r.can} ${r.city}`.toLowerCase().includes(q))) return false; }
     return true;
-  })), [leads, f]);
+  })), [leads, f, perFermo]);
   const dirty = f.meta || f.turno || f.stage != null || (f.stages && f.stages.length) || f.q;
   if (leads.length === 0) return <div className="none pad">Nessuna prenotazione.</div>;
   return (
@@ -541,12 +571,12 @@ function Prenotazioni({ leads, isAdmin, initial, onOpen }) {
       <section className="card">
         <div className="block-head"><h3>{rows.length} {rows.length === 1 ? "prenotazione" : "prenotazioni"}</h3>
           <span className="muted-s">{rows.reduce((a, r) => a + r.pax, 0).toLocaleString("it-IT")} pax</span></div>
-        <RowList rows={rows} isAdmin={isAdmin} onOpen={onOpen} />
+        <RowList rows={rows} isAdmin={isAdmin} onOpen={onOpen} showFermo={perFermo} />
       </section>
     </div>
   );
 }
-function RowList({ rows, isAdmin, onOpen }) {
+function RowList({ rows, isAdmin, onOpen, showFermo }) {
   if (rows.length === 0) return <div className="none pad">Nessuna prenotazione con questi filtri.</div>;
   return (
     <div className="rows">
@@ -559,6 +589,7 @@ function RowList({ rows, isAdmin, onOpen }) {
               <MetaChip meta={r.meta} />
               {r.turno && <span className="tchip">{r.turno}</span>}
               {isAdmin && r.can && <span className="tchip pr">{r.can}</span>}
+              {showFermo && giorniFermo(r) && <span className="tchip fermo">fermo {testoFermo(giorniFermo(r))}</span>}
             </span>
           </span>
           <span className="row-right">
@@ -783,6 +814,9 @@ function LeadSheet({ lead, isAdmin, onClose }) {
       <div className="lead-status" style={{ background: s.soft, color: s.ink }}>
         <i style={{ background: s.color }} />{lead.stato || s.label}
       </div>
+      {lead.stage !== 6 && lead.stage !== 0 && giorniFermo(lead) && (
+        <p className="lead-since">In questo stato {testoFermo(giorniFermo(lead))}</p>
+      )}
       {step >= 0 && (
         <div className="progress" aria-label={`Passo ${step + 1} di ${ACTIVE.length}`}>
           {ACTIVE.map((n, i) => <span key={n} className={i <= step ? "on" : ""} style={i <= step ? { background: s.color } : undefined} />)}
@@ -891,6 +925,11 @@ h1,h2,h3,h4{letter-spacing:-.02em}
 .top-left{display:flex;align-items:center;gap:10px;min-width:0}
 .top-logo{display:none}
 .top-h{font-size:26px;font-weight:800}
+.top-titles{display:flex;flex-direction:column;min-width:0}
+.top-sync{font-size:11px;font-weight:600;color:var(--faint);margin-top:1px}
+.sync-alert{display:flex;flex-direction:column;gap:3px;background:#FEE2E2;color:#991B1B;border-radius:16px;padding:12px 16px;margin-bottom:16px;font-size:13px}
+.tchip.fermo{color:var(--oink);background:var(--osoft);font-weight:700}
+.lead-since{font-size:13px;font-weight:600;color:var(--oink);margin-top:10px}
 .top-right{display:flex;align-items:center;gap:8px}
 .code-badge{display:inline-block;font-size:11px;font-weight:800;letter-spacing:.04em;color:var(--violet);background:var(--vsoft);padding:6px 11px;border-radius:999px;white-space:nowrap}
 .season{font-size:12px;font-weight:800;color:var(--oink);background:var(--osoft);border:none;border-radius:999px;padding:7px 12px;white-space:nowrap}
