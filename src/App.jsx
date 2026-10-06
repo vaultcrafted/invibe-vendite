@@ -161,6 +161,14 @@ function useDataLayer() {
     city: r.citta && r.citta !== "\\-" ? r.citta : "", data: r.data_richiesta,
   });
 
+  const fetchAccounts = useCallback(async (token, ruolo) => {
+    if (ruolo !== "admin") { setAccounts([]); return; }
+    try {
+      const { data } = await supabase.rpc("venditori_lista", { p_token: token });
+      if (Array.isArray(data)) setAccounts(data);
+    } catch {}
+  }, []);
+
   const fetchLeads = useCallback(async (token) => {
     setLoading(true);
     const { data, error } = await supabase.rpc("prenotazioni_lista", { p_token: token });
@@ -173,20 +181,16 @@ function useDataLayer() {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await supabase.rpc("venditori_lista_login");
-        if (Array.isArray(data)) setAccounts(data);
-      } catch {}
-      try {
         const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
         if (saved?.token) {
           const { data } = await supabase.rpc("venditore_me", { p_token: saved.token });
-          if (data?.profilo) { setUser({ token: saved.token, ...data.profilo }); await fetchLeads(saved.token); }
+          if (data?.profilo) { setUser({ token: saved.token, ...data.profilo }); await Promise.all([fetchLeads(saved.token), fetchAccounts(saved.token, data.profilo.ruolo)]); }
           else localStorage.removeItem(STORE_KEY);
         }
       } catch {}
       setBooting(false);
     })();
-  }, [fetchLeads]);
+  }, [fetchLeads, fetchAccounts]);
 
   const login = async (email, password) => {
     const { data, error } = await supabase.rpc("venditore_login", { p_email: email, p_password: password });
@@ -194,12 +198,12 @@ function useDataLayer() {
     if (data?.error) return data.error;
     localStorage.setItem(STORE_KEY, JSON.stringify({ token: data.token }));
     setUser({ token: data.token, ...data.profilo });
-    await fetchLeads(data.token);
+    await Promise.all([fetchLeads(data.token), fetchAccounts(data.token, data.profilo.ruolo)]);
     return null;
   };
   const logout = async () => {
     try { await supabase.rpc("venditore_logout", { p_token: user?.token }); } catch {}
-    localStorage.removeItem(STORE_KEY); setUser(null); setLeads([]);
+    localStorage.removeItem(STORE_KEY); setUser(null); setLeads([]); setAccounts([]);
   };
   const refresh = () => user && fetchLeads(user.token);
   return { booting, user, leads, loading, accounts, login, logout, refresh };
@@ -211,24 +215,18 @@ export default function App() {
   return (
     <>
       <StyleTag />
-      {dl.booting ? <Boot /> : dl.user ? <Panel dl={dl} /> : <Login onLogin={dl.login} accounts={dl.accounts} />}
+      {dl.booting ? <Boot /> : dl.user ? <Panel dl={dl} /> : <Login onLogin={dl.login} />}
     </>
   );
 }
 function Boot() { return <div className="boot"><span className="logo-tile big"><IVMark size={30} /></span><span>Carico…</span></div>; }
 
 /* ---------------- LOGIN ---------------- */
-function Login({ onLogin, accounts = [] }) {
+function Login({ onLogin }) {
   const [email, setEmail] = useState(""); const [pw, setPw] = useState("");
   const [err, setErr] = useState(""); const [busy, setBusy] = useState(false); const [hint, setHint] = useState(false);
-  const [q, setQ] = useState("");
-  // elenco account solo in modalita prova: aggiungi ?demo all'indirizzo
-  const demo = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("demo");
   const submit = async () => { if (busy) return; setBusy(true); setErr(""); const e = await onLogin(email.trim(), pw); setBusy(false); if (e) setErr(e); };
   const onKey = (ev) => ev.key === "Enter" && submit();
-  const pick = (a) => { setEmail(a.email); setPw("invibe"); setErr(""); };
-  const filtered = accounts.filter((a) =>
-    !q || `${a.codice_pr || ""} ${a.nome || ""} ${a.email}`.toLowerCase().includes(q.toLowerCase()));
   return (
     <div className="login">
       <section className="login-hero">
@@ -259,22 +257,6 @@ function Login({ onLogin, accounts = [] }) {
             {hint && <div className="hint">La password la assegna l'ufficio: scrivi a ufficio@invibe.it.</div>}
           </div>
 
-          {demo && accounts.length > 0 && (
-            <div className="quick">
-              <div className="quick-head">Accesso rapido</div>
-              <div className="quick-search"><Search size={14} />
-                <input placeholder="Cerca nome o codice" value={q} onChange={(e) => setQ(e.target.value)} /></div>
-              <div className="quick-list">
-                {filtered.map((a) => (
-                  <button key={a.email} className="qchip" title={a.email} onClick={() => pick(a)}>
-                    <span className="qcode">{a.codice_pr || "UFF"}</span>
-                    <span className="qname">{a.nome || a.email}</span>
-                  </button>
-                ))}
-                {filtered.length === 0 && <div className="quick-none">Nessun account.</div>}
-              </div>
-            </div>
-          )}
         </div>
       </section>
     </div>
