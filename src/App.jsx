@@ -4,6 +4,7 @@ import { supabase } from "./lib/supabase.js";
 import {
   Home, Filter, ListChecks, Trophy, LogOut, Search, ChevronRight, X, RefreshCw,
   MapPin, CalendarDays, BellRing, Users, Crown, ArrowRight, Sparkles,
+  UserRound, KeyRound, Copy, Check, Plus, Phone, AtSign, Mail, ShieldCheck, MessageCircle, Lock, TrendingUp, Medal,
 } from "lucide-react";
 
 /* ============================================================
@@ -211,7 +212,15 @@ function useDataLayer() {
     localStorage.removeItem(STORE_KEY); setUser(null); setLeads([]); setAccounts([]); setLastSync(null);
   };
   const refresh = () => user && fetchLeads(user.token);
-  return { booting, user, leads, loading, accounts, lastSync, login, logout, refresh };
+  // chiamata a una funzione del database con il token della sessione
+  const api = useCallback(async (fn, args = {}) => {
+    const { data, error } = await supabase.rpc(fn, { p_token: user?.token, ...args });
+    if (error) return { error: "Connessione non riuscita. Riprova." };
+    return data;
+  }, [user]);
+  const updateUser = (profilo) => setUser((u) => ({ ...u, ...profilo }));
+  const reloadAccounts = () => user && fetchAccounts(user.token, user.ruolo);
+  return { booting, user, leads, loading, accounts, lastSync, login, logout, refresh, api, updateUser, reloadAccounts };
 }
 /* <<<DATA_LAYER_END>>> */
 
@@ -274,6 +283,8 @@ const NAV = [
   { key: "funnel", label: "Funnel", Icon: Filter },
   { key: "prenotazioni", label: "Prenotazioni", Icon: ListChecks },
   { key: "venditori", label: "Venditori", Icon: Trophy, admin: true },
+  { key: "utenze", label: "Utenze", Icon: KeyRound, admin: true },
+  { key: "profilo", label: "Profilo", Icon: UserRound, noTab: true },
 ];
 function Panel({ dl }) {
   const { user, leads: allLeads, loading, logout, refresh, accounts, lastSync } = dl;
@@ -297,22 +308,24 @@ function Panel({ dl }) {
     funnel: "Funnel",
     prenotazioni: "Prenotazioni",
     venditori: "Venditori",
+    utenze: "Utenze PR",
+    profilo: isAdmin ? "Il tuo profilo" : "La tua area",
   };
   return (
     <div className="shell">
       <aside className="side">
         <div className="side-top"><Logo /></div>
         <nav className="side-nav">
-          {items.map(({ key, label, Icon }) => (
+          {items.filter((n) => !n.noTab).map(({ key, label, Icon }) => (
             <button key={key} className={`snav ${view === key ? "on" : ""}`} onClick={() => go(key)}>
               <Icon size={18} /><span>{label}</span></button>
           ))}
         </nav>
         <div className="side-bottom">
-          <div className="ucard">
+          <button className={`ucard ${view === "profilo" ? "on" : ""}`} onClick={() => go("profilo")}>
             <Avatar name={user.nome || user.email} size={36} />
             <div className="uinfo"><b>{user.nome || user.email}</b><span>{isAdmin ? "Ufficio" : user.codice_pr}</span></div>
-          </div>
+          </button>
           <button className="snav ghost" onClick={logout}><LogOut size={17} /><span>Esci</span></button>
         </div>
       </aside>
@@ -335,7 +348,7 @@ function Panel({ dl }) {
             <span className="code-badge hide-mob">{isAdmin ? "Tutti i codici" : (user.codice_pr || "—")}</span>
             <button className="icon-btn" onClick={refresh} aria-label="Aggiorna">
               <RefreshCw size={16} className={loading ? "spin" : ""} /></button>
-            <button className="icon-btn mob-only" onClick={logout} aria-label="Esci"><LogOut size={16} /></button>
+            <button className="me-btn mob-only" onClick={() => go("profilo")} aria-label="La tua area"><Avatar name={user.nome || user.email} size={34} /></button>
           </div>
         </header>
         <div className="content">
@@ -349,16 +362,19 @@ function Panel({ dl }) {
           {view === "funnel" && <FunnelView leads={leads} isAdmin={isAdmin} onOpen={setSel} />}
           {view === "prenotazioni" && <Prenotazioni leads={leads} isAdmin={isAdmin} initial={jump} onOpen={setSel} />}
           {view === "venditori" && isAdmin && <Venditori leads={leads} accounts={accounts} />}
+          {view === "utenze" && isAdmin && <Utenze api={dl.api} onChange={dl.reloadAccounts} me={user} />}
+          {view === "profilo" && <Profilo user={user} leads={leads} isAdmin={isAdmin} stagione={stag} api={dl.api} updateUser={dl.updateUser} logout={logout} onOpen={setSel} go={go} />}
         </div>
       </main>
 
       <nav className="tabbar">
-        {items.map(({ key, label, Icon }) => (
+        {items.filter((n) => !n.noTab).map(({ key, label, Icon }) => (
           <button key={key} className={`tab ${view === key ? "on" : ""}`} onClick={() => go(key)}>
             <Icon size={20} /><span>{label}</span></button>
         ))}
       </nav>
       {sel && <LeadSheet lead={sel} isAdmin={isAdmin} onClose={() => setSel(null)} />}
+      {user.cambio_password && <PrimoAccesso user={user} api={dl.api} updateUser={dl.updateUser} logout={logout} />}
     </div>
   );
 }
@@ -821,6 +837,370 @@ function Venditori({ leads, accounts = [] }) {
   );
 }
 
+/* ---------------- AREA PERSONALE ---------------- */
+async function copiaTesto(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch {}
+  try { const t = document.createElement("textarea"); t.value = text; t.style.position = "fixed"; t.style.opacity = "0";
+    document.body.appendChild(t); t.select(); document.execCommand("copy"); t.remove(); return true; } catch { return false; }
+}
+function Copiabile({ text, label = "Copia", className = "copy-btn" }) {
+  const [ok, setOk] = useState(false);
+  return (
+    <button type="button" className={className} onClick={async () => { if (await copiaTesto(text)) { setOk(true); setTimeout(() => setOk(false), 1600); } }}>
+      {ok ? <Check size={15} /> : <Copy size={15} />}<span>{ok ? "Copiato" : label}</span>
+    </button>
+  );
+}
+const mesePrima = (d) => new Date(d.getFullYear(), d.getMonth() - 1, 1);
+
+function Profilo({ user, leads, isAdmin, stagione, api, updateUser, logout, go }) {
+  const s = useMemo(() => computeStats(leads), [leads]);
+  const [pos, setPos] = useState(null);
+  useEffect(() => {
+    if (isAdmin) return;
+    let on = true;
+    api("venditore_posizione", { p_stagione: stagione }).then((d) => on && setPos(d && !d.error ? d : null));
+    return () => { on = false; };
+  }, [api, stagione, isAdmin, leads]);
+  const now = new Date();
+  const paxMese = useMemo(() => {
+    const m = {};
+    leads.forEach((r) => { if (!ACTIVE.includes(r.stage)) return; const d = parseData(r.data); if (d) m[meseKey(d)] = (m[meseKey(d)] || 0) + r.pax; });
+    return m;
+  }, [leads]);
+  const questo = paxMese[meseKey(now)] || 0, scorso = paxMese[meseKey(mesePrima(now))] || 0, delta = questo - scorso;
+  const maxMeta = Math.max(1, ...s.byMeta.map((m) => m.pax));
+  const inClassifica = pos && pos.mio > 0;
+
+  return (
+    <div className="stack">
+      <section className="phero">
+        <div className="phero-id">
+          <span className="phero-av"><Avatar name={user.nome || user.email} size={92} /></span>
+          <div className="phero-txt">
+            <span className="phero-kick">{isAdmin ? "Ufficio Invibe" : "PR Invibe"} · Estate {stagione}</span>
+            <h2>{user.nome || user.email}</h2>
+            {!isAdmin && user.codice_pr && (
+              <div className="phero-code">
+                <span>il tuo codice</span><b>{user.codice_pr}</b>
+                <Copiabile text={user.codice_pr} className="phero-copy" />
+              </div>
+            )}
+          </div>
+        </div>
+        {!isAdmin && (
+          <div className="phero-big">
+            <b><Num n={s.totPax} /></b><span>pax in gioco</span>
+            {inClassifica && <em><Medal size={14} /> {pos.pos}° in classifica</em>}
+          </div>
+        )}
+      </section>
+
+      {!isAdmin && (
+        <>
+          <div className="pstats">
+            <div className="pstat"><span>Prenotazioni attive</span><b><Num n={s.active} /></b><em>{s.working} ancora in corso</em></div>
+            <div className="pstat ok"><span>Confermate</span><b><Num n={s.confirmed} /></b><em>{s.confPax} pax confermati</em></div>
+            <div className="pstat"><span>Conversione</span><b>{s.convPct}<small>%</small></b><em>prenotazioni diventate pratiche</em></div>
+            <div className="pstat hot"><span>{MESI_LUNGHI[now.getMonth()]}</span><b><Num n={questo} /><small> pax</small></b>
+              <em>{delta === 0 ? `come ${MESI_LUNGHI[mesePrima(now).getMonth()]}` : `${delta > 0 ? "+" : ""}${delta} rispetto a ${MESI_LUNGHI[mesePrima(now).getMonth()]}`}</em></div>
+          </div>
+
+          <div className="grid2">
+            <section className="card prank">
+              <div className="block-head"><h3>La tua classifica</h3><Trophy size={18} className="prank-ic" /></div>
+              {inClassifica ? (
+                <>
+                  <div className="prank-row">
+                    <div className="prank-n"><small>#</small>{pos.pos}</div>
+                    <div className="prank-t"><b>su {pos.attivi} PR</b><span>con prenotazioni in Estate {stagione}</span></div>
+                  </div>
+                  <div className="prank-bar"><span style={{ width: `${Math.min(100, pos.mio / Math.max(1, pos.primo) * 100)}%` }} /></div>
+                  <p className="prank-msg">{pos.pos === 1 ? "Sei in testa. Ora tienitela stretta." :
+                    <>Ti mancano <b>{pos.distacco} pax</b> per superare chi ti sta davanti.</>}</p>
+                </>
+              ) : (
+                <p className="prank-msg">Non sei ancora in classifica: alla prima prenotazione ci entri.</p>
+              )}
+            </section>
+            <section className="card">
+              <div className="block-head"><h3>Le tue mete</h3><span className="muted-s">pax in gioco</span></div>
+              {s.byMeta.length === 0 ? <div className="none">Ancora nessuna prenotazione.</div> : (
+                <div className="pmete">
+                  {s.byMeta.map((m) => { const mi = metaInfo(m.meta); return (
+                    <div className="pmeta" key={m.meta}>
+                      <span className="pmeta-l" style={{ color: mi.ink }}><MapPin size={14} />{mi.short}</span>
+                      <span className="pmeta-t"><span style={{ width: `${m.pax / maxMeta * 100}%`, background: mi.dot }} /></span>
+                      <b>{m.pax}</b>
+                    </div>); })}
+                </div>
+              )}
+            </section>
+          </div>
+
+          {s.sollecitare > 0 && (
+            <button className="nudge" onClick={() => go("prenotazioni", { stages: DA_SOLLECITARE, label: "Da sollecitare" })}>
+              <span className="nudge-ic"><BellRing size={18} /></span>
+              <span className="nudge-t"><b>{s.sollecitare} {s.sollecitare === 1 ? "gruppo aspetta" : "gruppi aspettano"} una tua chiamata</b>
+                <em>hanno bloccato il posto ma non hanno ancora inviato la pratica</em></span>
+              <ChevronRight size={18} />
+            </button>
+          )}
+        </>
+      )}
+
+      <div className="grid2">
+        <DatiPersonali user={user} api={api} updateUser={updateUser} />
+        <section className="card">
+          <div className="block-head"><h3>Password</h3><Lock size={17} className="muted-ic" /></div>
+          <CambiaPassword api={api} updateUser={updateUser} />
+        </section>
+      </div>
+      <button className="btn-out" onClick={logout}><LogOut size={16} />Esci dall'app</button>
+    </div>
+  );
+}
+
+function DatiPersonali({ user, api, updateUser }) {
+  const [f, setF] = useState({ telefono: user.telefono || "", instagram: user.instagram || "", citta: user.citta || "" });
+  const [st, setSt] = useState(null);
+  const cambiato = f.telefono !== (user.telefono || "") || f.instagram !== (user.instagram || "") || f.citta !== (user.citta || "");
+  const salva = async (e) => {
+    e.preventDefault(); setSt("…");
+    const d = await api("venditore_aggiorna_profilo", { p_telefono: f.telefono, p_instagram: f.instagram, p_citta: f.citta });
+    if (d?.profilo) { updateUser(d.profilo); setF({ telefono: d.profilo.telefono || "", instagram: d.profilo.instagram || "", citta: d.profilo.citta || "" }); setSt("ok"); }
+    else setSt(d?.error || "Non sono riuscito a salvare.");
+  };
+  const set = (k) => (e) => { setF({ ...f, [k]: e.target.value }); setSt(null); };
+  return (
+    <section className="card">
+      <div className="block-head"><h3>I tuoi dati</h3><UserRound size={17} className="muted-ic" /></div>
+      <form onSubmit={salva} className="pform">
+        <div className="pline"><Mail size={16} /><span><em>Email di accesso</em><b>{user.email}</b></span></div>
+        <label className="pfld"><Phone size={16} /><span><em>Telefono</em><input value={f.telefono} onChange={set("telefono")} inputMode="tel" placeholder="Es. 333 123 4567" /></span></label>
+        <label className="pfld"><AtSign size={16} /><span><em>Instagram</em><input value={f.instagram} onChange={set("instagram")} placeholder="il tuo profilo" autoCapitalize="none" /></span></label>
+        <label className="pfld"><MapPin size={16} /><span><em>Città</em><input value={f.citta} onChange={set("citta")} placeholder="Dove vivi" /></span></label>
+        {st && st !== "…" && st !== "ok" && <div className="login-err">{st}</div>}
+        <button className="btn-primary" disabled={!cambiato || st === "…"}>
+          {st === "ok" && !cambiato ? <><Check size={16} />Salvato</> : st === "…" ? "Salvo…" : "Salva i dati"}</button>
+        <p className="pnote">Per cambiare email o codice scrivi all'ufficio.</p>
+      </form>
+    </section>
+  );
+}
+
+function CambiaPassword({ api, updateUser, primo }) {
+  const [f, setF] = useState({ a: "", n: "", c: "" });
+  const [st, setSt] = useState(null);
+  const set = (k) => (e) => { setF({ ...f, [k]: e.target.value }); setSt(null); };
+  const invia = async (e) => {
+    e.preventDefault();
+    if (f.n.length < 8) return setSt("La nuova password deve avere almeno 8 caratteri.");
+    if (f.n !== f.c) return setSt("Le due password nuove non coincidono.");
+    setSt("…");
+    const d = await api("venditore_cambia_password", { p_attuale: f.a, p_nuova: f.n });
+    if (d?.ok) { setF({ a: "", n: "", c: "" }); setSt("ok"); updateUser(d.profilo); }
+    else setSt(d?.error || "Non sono riuscito a cambiarla.");
+  };
+  return (
+    <form onSubmit={invia} className="pform">
+      <label className="fld"><span>{primo ? "Password provvisoria (quella che ti abbiamo mandato)" : "Password attuale"}</span>
+        <input type="password" value={f.a} onChange={set("a")} autoComplete="current-password" required /></label>
+      <label className="fld"><span>Nuova password (almeno 8 caratteri)</span>
+        <input type="password" value={f.n} onChange={set("n")} autoComplete="new-password" required /></label>
+      <label className="fld"><span>Ripeti la nuova password</span>
+        <input type="password" value={f.c} onChange={set("c")} autoComplete="new-password" required /></label>
+      {st && st !== "…" && st !== "ok" && <div className="login-err">{st}</div>}
+      {st === "ok" && <div className="pok"><ShieldCheck size={16} />Password cambiata. Gli altri dispositivi dovranno rientrare.</div>}
+      <button className="btn-primary" disabled={st === "…"}>{st === "…" ? "Cambio…" : primo ? "Scegli e entra" : "Cambia password"}</button>
+    </form>
+  );
+}
+
+function PrimoAccesso({ user, api, updateUser, logout }) {
+  return (
+    <div className="first">
+      <div className="first-card">
+        <span className="logo-tile big"><img src="/icon-192.png" alt="" /></span>
+        <h2>Ciao {(user.nome || "").split(" ")[0]}!</h2>
+        <p>La password che hai usato è provvisoria. Scegline una tua: da qui in poi entri con quella.</p>
+        <CambiaPassword api={api} updateUser={updateUser} primo />
+        <button className="linkbtn" onClick={logout}>Esci</button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- UTENZE (ufficio) ---------------- */
+const RUOLI = [["venditore", "PR"], ["canale", "Canale (Social, Scuole)"], ["admin", "Ufficio"]];
+function quando(ts) {
+  if (!ts) return "mai entrato";
+  const d = Math.floor((Date.now() - new Date(ts).getTime()) / GIORNO);
+  return d <= 0 ? "entrato oggi" : d === 1 ? "entrato ieri" : `entrato ${d} giorni fa`;
+}
+const FILTRI_U = [
+  ["attive", "Attive", (u) => u.attivo],
+  ["mai", "Mai entrati", (u) => u.attivo && !u.ultimo_accesso],
+  ["provv", "Password provvisoria", (u) => u.attivo && u.cambio_password],
+  ["off", "Disattivate", (u) => !u.attivo],
+];
+function Utenze({ api, onChange, me }) {
+  const [list, setList] = useState(null);
+  const [q, setQ] = useState("");
+  const [f, setF] = useState("attive");
+  const [edit, setEdit] = useState(null);
+  const load = useCallback(async () => { const d = await api("venditori_admin_lista"); setList(Array.isArray(d) ? d : []); }, [api]);
+  useEffect(() => { load(); }, [load]);
+  const view = useMemo(() => {
+    if (!list) return [];
+    const fn = FILTRI_U.find((x) => x[0] === f)[2];
+    const qq = q.trim().toLowerCase();
+    return list.filter(fn).filter((u) => !qq || `${u.nome} ${u.email} ${u.codice_pr || ""} ${u.telefono || ""}`.toLowerCase().includes(qq));
+  }, [list, f, q]);
+  if (!list) return <div className="none pad">Carico le utenze…</div>;
+  const conta = (fn) => list.filter(fn).length;
+  return (
+    <div className="stack">
+      <div className="kpis">
+        {FILTRI_U.map(([k, l, fn]) => (
+          <button key={k} className={`kpi kbtn ${f === k ? "on" : ""}`} onClick={() => setF(k)}>
+            <b>{conta(fn)}</b><span>{l === "Attive" ? "utenze attive" : l.toLowerCase()}</span></button>
+        ))}
+      </div>
+      <div className="frow ubar">
+        <div className="search grow"><Search size={16} /><input placeholder="Cerca per nome, email, codice o telefono" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+        <button className="btn-new" onClick={() => setEdit({ ruolo: "venditore", attivo: true })}><Plus size={17} />Nuovo PR</button>
+      </div>
+      <section className="card flush">
+        <div className="vlist">
+          {view.map((u) => (
+            <button key={u.id} className={`urow ${u.attivo ? "" : "off"}`} onClick={() => setEdit(u)}>
+              <Avatar name={u.nome} size={40} />
+              <span className="vid">
+                <span className="vname">{u.nome}
+                  {u.codice_pr && <span className="ucode">{u.codice_pr}</span>}
+                  {u.ruolo !== "venditore" && <span className="vtag">{u.ruolo === "admin" ? "ufficio" : "canale"}</span>}</span>
+                <span className="uemail">{u.email}{u.telefono ? ` · ${u.telefono}` : ""}</span>
+              </span>
+              <span className="ustate">
+                {!u.attivo ? <span className="ust off">disattivata</span>
+                  : u.cambio_password ? <span className="ust warn">password provvisoria</span>
+                  : u.ultimo_accesso ? <span className="ust ok">attiva</span> : <span className="ust">da attivare</span>}
+                <em>{quando(u.ultimo_accesso)}</em>
+              </span>
+              <ChevronRight size={16} className="vchev" />
+            </button>
+          ))}
+          {view.length === 0 && <div className="none pad">Nessuna utenza con questi filtri.</div>}
+        </div>
+      </section>
+      <p className="pnote">Le password non si possono leggere, nemmeno dall'ufficio: si genera una password provvisoria nuova, il PR la usa una volta e poi ne sceglie una sua.</p>
+      {edit && <UtenzaSheet u={edit} api={api} me={me} onClose={() => setEdit(null)} onSaved={() => { load(); onChange?.(); }} />}
+    </div>
+  );
+}
+
+function messaggioAccesso(c) {
+  return `Ciao ${(c.nome || "").split(" ")[0]}! Ecco il tuo accesso all'app Vendite Invibe: ${window.location.origin}\n\nEmail: ${c.email}\nPassword provvisoria: ${c.password}\n\nAl primo accesso ti chiede di sceglierne una tua. Dalla schermata Home puoi aggiungerla al telefono come un'app.`;
+}
+function waLink(tel, text) {
+  let n = (tel || "").replace(/\D/g, "");
+  if (!n) return null;
+  if (n.startsWith("00")) n = n.slice(2);
+  else if (n.length === 10 && n.startsWith("3")) n = "39" + n;
+  return `https://wa.me/${n}?text=${encodeURIComponent(text)}`;
+}
+function Credenziali({ c }) {
+  const msg = messaggioAccesso(c);
+  const wa = waLink(c.telefono, msg);
+  return (
+    <div className="cred">
+      <div className="cred-head"><KeyRound size={18} /><b>Accesso pronto da mandare</b></div>
+      <div className="cred-row"><span>Email</span><b>{c.email}</b></div>
+      <div className="cred-row big"><span>Password provvisoria</span><b>{c.password}</b></div>
+      <div className="cred-btns">
+        <Copiabile text={msg} label="Copia messaggio" className="btn-primary" />
+        {wa && <a className="btn-wa" href={wa} target="_blank" rel="noreferrer"><MessageCircle size={16} />Manda su WhatsApp</a>}
+      </div>
+      <p className="cred-note">La password si vede solo adesso: copiala o mandala prima di chiudere.</p>
+    </div>
+  );
+}
+
+function UtenzaSheet({ u, api, me, onClose, onSaved }) {
+  const nuovo = !u.id;
+  const [f, setF] = useState({ nome: u.nome || "", email: u.email || "", codice_pr: u.codice_pr || "", ruolo: u.ruolo || "venditore", telefono: u.telefono || "", attivo: u.attivo !== false });
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [cred, setCred] = useState(null);
+  const [conferma, setConferma] = useState(false);
+  const isMe = u.id && u.id === me.id;
+  const set = (k) => (e) => { setF({ ...f, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value }); setErr(null); };
+  const salva = async (e) => {
+    e.preventDefault(); setBusy(true);
+    const d = await api("venditore_admin_salva", { p_id: u.id || null, p_nome: f.nome, p_email: f.email, p_codice_pr: f.codice_pr,
+      p_ruolo: f.ruolo, p_telefono: f.telefono, p_attivo: f.attivo });
+    setBusy(false);
+    if (!d?.ok) return setErr(d?.error || "Non sono riuscito a salvare.");
+    onSaved();
+    if (d.password) setCred({ nome: f.nome, email: f.email.trim().toLowerCase(), password: d.password, telefono: f.telefono });
+    else onClose();
+  };
+  const reset = async () => {
+    setBusy(true);
+    const d = await api("venditore_admin_reset_password", { p_id: u.id });
+    setBusy(false); setConferma(false);
+    if (!d?.ok) return setErr(d?.error || "Non sono riuscito a generarla.");
+    setCred({ nome: d.nome, email: d.email, password: d.password, telefono: f.telefono }); onSaved();
+  };
+  return (
+    <Sheet onClose={onClose}>
+      <div className="sh-head">
+        <Avatar name={f.nome || "?"} size={52} />
+        <div><h2>{nuovo ? "Nuovo PR" : f.nome}</h2>
+          {!nuovo && <span className="muted-s">{quando(u.ultimo_accesso)}{u.cambio_password ? " · password provvisoria" : ""}</span>}</div>
+      </div>
+      {cred ? (
+        <>
+          <Credenziali c={cred} />
+          <button className="btn-out" onClick={onClose}>Fatto</button>
+        </>
+      ) : (
+        <form onSubmit={salva} className="pform">
+          <label className="fld"><span>Nome e cognome</span><input value={f.nome} onChange={set("nome")} required /></label>
+          <label className="fld"><span>Email (serve per entrare)</span><input type="email" value={f.email} onChange={set("email")} autoCapitalize="none" required /></label>
+          <div className="fld2">
+            <label className="fld"><span>Codice PR</span><input value={f.codice_pr} onChange={set("codice_pr")} placeholder="es. EJ4" autoCapitalize="characters" disabled={f.ruolo === "admin"} /></label>
+            <label className="fld"><span>Ruolo</span>
+              <select value={f.ruolo} onChange={set("ruolo")} disabled={isMe}>{RUOLI.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
+          </div>
+          <label className="fld"><span>Telefono (per mandargli l'accesso su WhatsApp)</span><input value={f.telefono} onChange={set("telefono")} inputMode="tel" /></label>
+          {!nuovo && !isMe && (
+            <label className="switch"><input type="checkbox" checked={f.attivo} onChange={set("attivo")} />
+              <span className="switch-ui" /><span>{f.attivo ? "Può entrare nell'app" : "Accesso disattivato"}</span></label>
+          )}
+          {f.codice_pr && f.ruolo !== "admin" && (
+            <p className="pnote">Vede solo le prenotazioni col codice <b>{f.codice_pr.toUpperCase()}</b> nella colonna Canale del Bloccaposti.</p>
+          )}
+          {err && <div className="login-err">{err}</div>}
+          <button className="btn-primary" disabled={busy}>{busy ? "Salvo…" : nuovo ? "Crea e genera la password" : "Salva le modifiche"}</button>
+          {!nuovo && !isMe && f.attivo && (
+            conferma ? (
+              <div className="confirm">
+                <span>La password attuale smette di funzionare e il PR viene scollegato. Procedo?</span>
+                <div><button type="button" className="btn-out sm" onClick={() => setConferma(false)}>Annulla</button>
+                  <button type="button" className="btn-warn" onClick={reset} disabled={busy}>Sì, genera</button></div>
+              </div>
+            ) : (
+              <button type="button" className="btn-out" onClick={() => setConferma(true)}><KeyRound size={16} />Genera nuova password</button>
+            )
+          )}
+        </form>
+      )}
+    </Sheet>
+  );
+}
+
 /* ---------------- SHEETS ---------------- */
 function Sheet({ onClose, wide, children }) {
   useEffect(() => {
@@ -1251,6 +1631,108 @@ select.season{appearance:none;-webkit-appearance:none;padding-right:28px;cursor:
 .empty-ic{width:56px;height:56px;border-radius:18px;background:var(--osoft);color:var(--orange);display:grid;place-items:center}
 .empty h3{font-size:20px;font-weight:800}.empty p{font-size:14px;color:var(--muted);max-width:340px;line-height:1.5}
 
+
+/* area personale */
+.me-btn{border-radius:50%;padding:0}
+.ucard{border-radius:14px;width:100%;transition:background .14s}.ucard:hover,.ucard.on{background:var(--vsoft)}
+.phero{background:var(--grad);color:#fff;border-radius:28px;padding:28px;display:flex;align-items:center;justify-content:space-between;gap:24px;position:relative;overflow:hidden}
+.phero::before{content:"";position:absolute;width:420px;height:420px;border-radius:50%;background:rgba(255,255,255,.07);right:-120px;top:-200px}
+.phero::after{content:"";position:absolute;width:180px;height:180px;border-radius:50%;background:var(--orange);opacity:.9;right:34%;bottom:-130px}
+.phero>*{position:relative;z-index:1}
+.phero-id{display:flex;align-items:center;gap:20px;min-width:0}
+.phero-av .avatar{box-shadow:0 0 0 5px rgba(255,255,255,.22)}
+.phero-txt{min-width:0}
+.phero-kick{font-size:13px;font-weight:700;color:var(--pale);letter-spacing:.02em}
+.phero h2{font-size:38px;font-weight:800;letter-spacing:-.035em;line-height:1.05;margin:4px 0 12px;text-transform:capitalize}
+.phero-code{display:inline-flex;align-items:center;gap:10px;background:rgba(255,255,255,.14);border-radius:16px;padding:8px 8px 8px 14px}
+.phero-code span{font-size:11px;font-weight:700;color:var(--pale);text-transform:uppercase;letter-spacing:.08em;white-space:nowrap}
+.phero-code b{font-size:24px;font-weight:800;letter-spacing:.04em}
+.phero-copy{display:inline-flex;align-items:center;gap:6px;background:#fff;color:var(--violet);font-size:12px;font-weight:800;padding:8px 11px;border-radius:11px}
+.phero-code .phero-copy span{color:var(--violet);text-transform:none;letter-spacing:0;font-size:12px;font-weight:800}
+.phero-big{text-align:right;display:flex;flex-direction:column;align-items:flex-end;flex-shrink:0}
+.phero-big b{font-size:84px;font-weight:800;letter-spacing:-.05em;line-height:.95}
+.phero-big span{font-size:15px;font-weight:700;color:var(--pale)}
+.phero-big em{font-style:normal;display:inline-flex;align-items:center;gap:5px;margin-top:10px;background:var(--orange);font-size:13px;font-weight:800;padding:6px 12px;border-radius:999px}
+.pstats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.pstat{background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:18px 20px;display:flex;flex-direction:column;gap:2px}
+.pstat span{font-size:13px;font-weight:700;color:var(--muted)}
+.pstat.hot span{text-transform:capitalize}
+.pstat b{font-size:44px;font-weight:800;letter-spacing:-.04em;line-height:1.1}
+.pstat b small{font-size:18px;letter-spacing:0;color:var(--muted)}
+.pstat em{font-style:normal;font-size:12px;font-weight:600;color:var(--faint)}
+.pstat.ok b{color:var(--green)}
+.pstat.hot{background:var(--osoft);border-color:var(--osoft)}.pstat.hot span,.pstat.hot em{color:var(--oink)}.pstat.hot b{color:var(--oink)}
+.prank-ic{color:var(--orange)}
+.prank-row{display:flex;align-items:center;gap:16px}
+.prank-n{font-size:76px;font-weight:800;letter-spacing:-.05em;line-height:1;color:var(--violet)}
+.prank-n small{font-size:34px;color:var(--violet2);margin-right:2px}
+.prank-t{display:flex;flex-direction:column}.prank-t b{font-size:18px;font-weight:800}.prank-t span{font-size:13px;color:var(--muted);font-weight:500}
+.prank-bar{height:10px;background:var(--bg);border-radius:99px;overflow:hidden;margin:16px 0 12px}
+.prank-bar span{display:block;height:100%;background:linear-gradient(90deg,var(--violet2),var(--violet));border-radius:99px;transition:width .8s cubic-bezier(.2,.8,.2,1)}
+.prank-msg{font-size:14px;color:var(--muted);line-height:1.5}.prank-msg b{color:var(--ink)}
+.pmete{display:flex;flex-direction:column;gap:12px;padding-top:4px}
+.pmeta{display:grid;grid-template-columns:100px minmax(0,1fr) 48px;align-items:center;gap:12px}
+.pmeta-l{display:flex;align-items:center;gap:5px;font-size:13px;font-weight:700}
+.pmeta-t{height:12px;background:var(--bg);border-radius:99px;overflow:hidden}
+.pmeta-t span{display:block;height:100%;border-radius:99px;transition:width .7s cubic-bezier(.2,.8,.2,1)}
+.pmeta b{font-size:16px;font-weight:800;text-align:right}
+.muted-ic{color:var(--faint)}
+.pform{display:flex;flex-direction:column;gap:4px}
+.pform .btn-primary{margin-top:8px}
+.pline,.pfld{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:14px;background:var(--bg);margin-bottom:8px;color:var(--faint)}
+.pline span,.pfld span{display:flex;flex-direction:column;flex:1;min-width:0}
+.pline em,.pfld em{font-style:normal;font-size:11px;font-weight:700;color:var(--faint)}
+.pline b{font-size:15px;font-weight:700;color:var(--ink);overflow:hidden;text-overflow:ellipsis}
+.pfld input{background:none;border:none;outline:none;font-size:15px;font-weight:600;padding:2px 0;width:100%}
+.pfld:focus-within{box-shadow:inset 0 0 0 1.5px var(--violet2);background:#fff}
+.pnote{font-size:12px;color:var(--faint);line-height:1.5;margin-top:4px}
+.pok{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--green);margin-bottom:6px}
+.btn-out{display:inline-flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:13px;border-radius:14px;border:1.5px solid var(--line2);background:var(--surface);font-size:14px;font-weight:700;color:var(--muted);margin-top:8px;transition:color .14s,border-color .14s}
+.btn-out:hover{color:var(--ink);border-color:var(--faint)}
+.btn-out.sm{width:auto;padding:9px 14px;margin:0}
+.first{position:fixed;inset:0;z-index:80;background:var(--grad);display:grid;place-items:center;padding:20px;overflow-y:auto}
+.first-card{background:#fff;border-radius:28px;padding:30px 26px 22px;width:100%;max-width:420px;display:flex;flex-direction:column;align-items:center;text-align:center}
+.first-card h2{font-size:28px;font-weight:800;margin-top:16px}
+.first-card p{font-size:14px;color:var(--muted);line-height:1.5;margin:8px 0 20px}
+.first-card form{width:100%;text-align:left}
+/* utenze */
+.kbtn{text-align:left;transition:border-color .14s,background .14s}
+.kbtn:hover{border-color:var(--line2)}
+.kbtn.on{border-color:var(--violet);background:var(--vsoft)}.kbtn.on b{color:var(--violet)}
+.ubar{flex-wrap:nowrap}.search.grow{flex:1}
+.btn-new{display:inline-flex;align-items:center;gap:6px;background:var(--violet);color:#fff;font-size:14px;font-weight:700;padding:0 18px;border-radius:16px;white-space:nowrap;transition:background .14s}
+.btn-new:hover{background:var(--vink)}
+.urow{display:flex;align-items:center;gap:12px;padding:12px 10px;border-radius:16px;width:100%;transition:background .13s}
+.urow+.urow{border-top:1px solid var(--line)}
+.urow:hover{background:var(--bg)}
+.urow.off{opacity:.5}
+.ucode{font-size:10px;font-weight:800;color:var(--violet);background:var(--vsoft);border-radius:999px;padding:2px 8px}
+.uemail{font-size:12px;color:var(--muted);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ustate{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0}
+.ustate em{font-style:normal;font-size:11px;color:var(--faint);font-weight:600}
+.ust{font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;background:var(--bg);color:var(--muted)}
+.ust.ok{background:var(--gsoft);color:#166534}.ust.warn{background:var(--osoft);color:var(--oink)}.ust.off{background:#FEE2E2;color:#991B1B}
+.fld select{width:100%;background:var(--bg);border:1.5px solid transparent;border-radius:14px;padding:13px 14px;font-size:15px;appearance:none;-webkit-appearance:none}
+.fld input:disabled,.fld select:disabled{opacity:.55}
+.fld2{display:grid;grid-template-columns:1fr 1.3fr;gap:10px}
+.switch{display:flex;align-items:center;gap:10px;font-size:14px;font-weight:600;margin:4px 0 10px;cursor:pointer}
+.switch input{position:absolute;opacity:0;pointer-events:none}
+.switch-ui{width:42px;height:24px;border-radius:99px;background:var(--line2);position:relative;transition:background .15s;flex-shrink:0}
+.switch-ui::after{content:"";position:absolute;width:18px;height:18px;border-radius:50%;background:#fff;left:3px;top:3px;transition:transform .15s}
+.switch input:checked+.switch-ui{background:var(--green)}.switch input:checked+.switch-ui::after{transform:translateX(18px)}
+.confirm{background:var(--osoft);color:var(--oink);border-radius:16px;padding:14px;margin-top:8px;font-size:13px;font-weight:600;display:flex;flex-direction:column;gap:10px}
+.confirm div{display:flex;gap:8px;justify-content:flex-end}
+.btn-warn{background:var(--orange);color:#fff;font-weight:800;font-size:13px;padding:9px 14px;border-radius:12px}
+.cred{background:var(--vsoft);border-radius:22px;padding:18px;display:flex;flex-direction:column;gap:10px}
+.cred-head{display:flex;align-items:center;gap:8px;color:var(--violet)}.cred-head b{font-size:15px;color:var(--ink)}
+.cred-row{background:#fff;border-radius:14px;padding:10px 14px;display:flex;flex-direction:column}
+.cred-row span{font-size:11px;font-weight:700;color:var(--faint)}
+.cred-row b{font-size:15px;font-weight:700;word-break:break-all}
+.cred-row.big b{font-size:26px;font-weight:800;letter-spacing:.02em;color:var(--violet);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.cred-btns{display:flex;flex-direction:column;gap:8px}
+.cred-btns .btn-primary{margin:0}
+.btn-wa{display:flex;align-items:center;justify-content:center;gap:8px;background:#16A34A;color:#fff;font-weight:700;font-size:15px;padding:14px;border-radius:14px;text-decoration:none}
+.cred-note{font-size:12px;color:var(--oink);font-weight:600}
 /* responsive */
 @media(max-width:1280px){.dash{grid-template-columns:1fr}.rail{position:static;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));align-items:start}}
 @media(max-width:1100px){.kpis{grid-template-columns:repeat(2,1fr)}}
@@ -1288,6 +1770,16 @@ select.season{appearance:none;-webkit-appearance:none;padding-right:28px;cursor:
 .grab{display:block;width:42px;height:5px;border-radius:99px;background:var(--line2);margin:0 auto 14px}
 .sheet-x{top:22px}
 .sh-hero{grid-template-columns:repeat(2,1fr);row-gap:12px}
+.phero{flex-direction:column;align-items:stretch;padding:22px 20px;border-radius:24px;gap:18px}
+.phero-id{gap:14px}.phero-av .avatar{width:64px!important;height:64px!important;font-size:22px!important}
+.phero h2{font-size:26px;margin-bottom:10px}
+.phero-big{align-items:flex-start;text-align:left;background:rgba(255,255,255,.12);border-radius:20px;padding:14px 16px}
+.phero-big b{font-size:60px}
+.pstats{grid-template-columns:repeat(2,1fr);gap:10px}
+.pstat{padding:14px;border-radius:18px}.pstat b{font-size:32px}
+.prank-n{font-size:60px}
+.ubar{flex-wrap:wrap}.btn-new{padding:12px 18px;width:100%;justify-content:center}
+.ustate em{display:none}
 }
 @media(max-width:420px){.hero-top{flex-direction:column}.hero-month{flex-direction:row;align-items:baseline;gap:8px;width:100%;justify-content:center}.row-meta .tchip.pr{display:none}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
