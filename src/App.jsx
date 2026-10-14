@@ -396,6 +396,7 @@ function Dashboard({ leads, isAdmin, user, loading, go, onOpen, stagione, accoun
     const g = leads.filter((r) => DA_SOLLECITARE.includes(r.stage)).map(giorniFermo).filter(Boolean);
     return g.length ? g.reduce((a, b) => (b.gg > a.gg ? b : a)) : null;
   }, [leads]);
+  const [prSel, setPrSel] = useState(null);
   if (leads.length === 0 && !loading) return <Empty user={user} />;
   const first = (user.nome || "").split(" ")[0];
   const now = new Date(); const thisKey = meseKey(now);
@@ -467,6 +468,7 @@ function Dashboard({ leads, isAdmin, user, loading, go, onOpen, stagione, accoun
         </section>
       </div>
 
+      {isAdmin && <AndamentoPR leads={leads} accounts={accounts} onPr={(code, st) => setPrSel({ code, st })} />}
       <section className="card">
         <div className="block-head"><h3>Ultime prenotazioni</h3>
           <button className="link" onClick={() => go("prenotazioni")}>Vedi tutte <ChevronRight size={14} /></button></div>
@@ -474,6 +476,7 @@ function Dashboard({ leads, isAdmin, user, loading, go, onOpen, stagione, accoun
       </section>
     </div>
     <DashRail leads={leads} isAdmin={isAdmin} accounts={accounts} go={go} onOpen={onOpen} />
+    {prSel && <PrPanel key={prSel.code + prSel.st} code={prSel.code} stage={prSel.st} leads={leads} accounts={accounts} onClose={() => setPrSel(null)} onOpen={onOpen} />}
     </div>
   );
 }
@@ -1340,6 +1343,181 @@ function Cronologia({ api, accounts = [], leads = [], onOpen }) {
   );
 }
 
+/* ---------------- ANDAMENTO PR (home ufficio) ---------------- */
+// 8 colori fissi (validati per daltonismo); oltre l'ottavo PR si raggruppa in "Altri PR".
+const PR_COLORI = [
+  { c: "#2a78d6", t: "#fff" }, { c: "#eb6834", t: "#fff" }, { c: "#1baf7a", t: "#0F1B33" }, { c: "#eda100", t: "#0F1B33" },
+  { c: "#e87ba4", t: "#0F1B33" }, { c: "#008300", t: "#fff" }, { c: "#6250d6", t: "#fff" }, { c: "#e34948", t: "#fff" },
+];
+const ALTRI = { c: "#B8C2D3", t: "#0F1B33" };
+const RIGHE_PR = [1, 2, 3, 4, 5, 6, 7];
+
+function usePrNomi(accounts) {
+  return useMemo(() => { const m = {}; accounts.forEach((a) => { if (a.codice_pr) m[a.codice_pr] = a.nome; }); return m; }, [accounts]);
+}
+function AndamentoPR({ leads, accounts = [], onPr }) {
+  const nomi = usePrNomi(accounts);
+  const { top, righe } = useMemo(() => {
+    const per = {}; // codice -> {tot, [stage]: n}
+    leads.forEach((r) => {
+      if (!r.can || r.stage === 0) return;
+      const d = per[r.can] = per[r.can] || { code: r.can, tot: 0 };
+      if (ACTIVE.includes(r.stage)) d.tot++;
+      d[r.stage] = (d[r.stage] || 0) + 1;
+    });
+    const ord = Object.values(per).sort((a, b) => b.tot - a.tot || a.code.localeCompare(b.code));
+    const top = ord.slice(0, 8).map((d, i) => ({ ...d, col: PR_COLORI[i] }));
+    const altriCod = ord.slice(8);
+    const righe = RIGHE_PR.map((n) => {
+      const segs = top.map((d) => ({ code: d.code, col: d.col, n: d[n] || 0 })).filter((s) => s.n > 0);
+      const altri = altriCod.map((d) => ({ code: d.code, n: d[n] || 0 })).filter((s) => s.n > 0).sort((a, b) => b.n - a.n);
+      const nAltri = altri.reduce((a, s) => a + s.n, 0);
+      const tot = segs.reduce((a, s) => a + s.n, 0) + nAltri;
+      return { stage: stageOf(n), segs, altri, nAltri, tot };
+    }).filter((r) => r.tot > 0);
+    return { top, righe };
+  }, [leads]);
+  const [altri, setAltri] = useState(null);
+  if (!righe.length) return null;
+  const nome = (c) => nomi[c] || c;
+  return (
+    <section className="card">
+      <div className="block-head"><h3>Andamento PR</h3><span className="muted-s">pratiche per stato · tocca un colore</span></div>
+      <div className="apr">
+        {righe.map((r) => (
+          <div className="apr-row" key={r.stage.n}>
+            <div className="apr-lab"><i style={{ background: r.stage.color }} /><b>{r.stage.label}</b><em>{r.tot}</em></div>
+            <div className="apr-bar" role="list">
+              {r.segs.map((s) => (
+                <button key={s.code} role="listitem" className="apr-seg" style={{ flexGrow: s.n, background: s.col.c, color: s.col.t }}
+                  onClick={() => onPr(s.code, r.stage.n)} aria-label={`${nome(s.code)}: ${s.n} ${r.stage.label.toLowerCase()}`}>
+                  {s.n / r.tot >= 0.045 && <span>{s.n}</span>}
+                  <span className="apr-tip">{nome(s.code)} · <b>{s.n}</b> ({Math.round(s.n / r.tot * 100)}%)</span>
+                </button>
+              ))}
+              {r.nAltri > 0 && (
+                <button className="apr-seg" style={{ flexGrow: r.nAltri, background: ALTRI.c, color: ALTRI.t }}
+                  onClick={() => setAltri(r)} aria-label={`Altri PR: ${r.nAltri}`}>
+                  {r.nAltri / r.tot >= 0.045 && <span>{r.nAltri}</span>}
+                  <span className="apr-tip">Altri {r.altri.length} PR · <b>{r.nAltri}</b> ({Math.round(r.nAltri / r.tot * 100)}%)</span>
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="apr-leg">
+        {top.map((d) => (
+          <button key={d.code} onClick={() => onPr(d.code, null)}><i style={{ background: d.col.c }} />{nome(d.code)}</button>
+        ))}
+        <span><i style={{ background: ALTRI.c }} />Altri PR</span>
+      </div>
+      {altri && (
+        <Sheet onClose={() => setAltri(null)}>
+          <div className="sh-head"><span className="apr-dot" style={{ background: altri.stage.color }} />
+            <div><h2>{altri.stage.label}</h2><span className="muted-s">gli altri PR · {altri.nAltri} pratiche</span></div></div>
+          <div className="sh-rows">
+            {altri.altri.map((s) => (
+              <button className="sh-row apr-alt" key={s.code} onClick={() => { setAltri(null); onPr(s.code, altri.stage.n); }}>
+                <Avatar name={nome(s.code)} size={34} />
+                <span className="row-main"><span className="row-name">{nome(s.code)}</span></span>
+                <b>{s.n}</b><ChevronRight size={16} className="vchev" />
+              </button>
+            ))}
+          </div>
+        </Sheet>
+      )}
+    </section>
+  );
+}
+
+// barre mese per mese generiche, con il mese migliore evidenziato
+function BarreMese({ dati, fmt = (v) => v, unita }) {
+  if (!dati.length) return <div className="none">Ancora niente da mostrare.</div>;
+  const max = Math.max(1e-9, ...dati.map((d) => d.v));
+  const best = dati.reduce((a, d) => (d.v > a.v ? d : a), dati[0]);
+  return (
+    <div className="bmese">
+      {dati.map((d) => (
+        <div className={`bm ${d === best && d.v > 0 ? "best" : ""}`} key={d.key} title={`${MESI_LUNGHI[d.mo]} ${d.y}: ${fmt(d.v)}${unita ? " " + unita : ""}`}>
+          <span className="bm-v">{d.v > 0 ? fmt(d.v) : ""}</span>
+          <span className="bm-c"><span style={{ height: `${Math.max(d.v ? 4 : 0, d.v / max * 100)}%` }} /></span>
+          <span className="bm-l">{MESI[d.mo]} {String(d.y).slice(2)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+function mesiPr(leads) {
+  const m = {};
+  leads.forEach((r) => {
+    if (r.stage === 0) return;
+    const dt = parseData(r.data); if (!dt) return;
+    const k = meseKey(dt); m[k] = m[k] || { key: k, y: dt.getFullYear(), mo: dt.getMonth(), pren: 0, conf: 0 };
+    m[k].pren++; if (r.stage === 6) m[k].conf++;
+  });
+  const keys = Object.keys(m).sort(); if (!keys.length) return [];
+  const out = []; let [y, mo] = keys[0].split("-").map(Number); mo -= 1;
+  const [ly, lm] = keys[keys.length - 1].split("-").map(Number);
+  while (y < ly || (y === ly && mo <= lm - 1)) {
+    const k = `${y}-${String(mo + 1).padStart(2, "0")}`;
+    out.push(m[k] || { key: k, y, mo, pren: 0, conf: 0 }); mo++; if (mo > 11) { mo = 0; y++; }
+  }
+  return out.slice(-12);
+}
+function PrPanel({ code, stage, leads, accounts = [], onClose, onOpen }) {
+  const nomi = usePrNomi(accounts);
+  const nome = nomi[code] || code;
+  const mine = useMemo(() => leads.filter((r) => r.can === code), [leads, code]);
+  const s = useMemo(() => computeStats(mine), [mine]);
+  const mesi = useMemo(() => mesiPr(mine), [mine]);
+  const [st, setSt] = useState(stage);
+  const pren = mesi.map((m) => ({ ...m, v: m.pren }));
+  const conv = mesi.map((m) => ({ ...m, v: m.pren ? m.conf / m.pren * 100 : 0 }));
+  const bestP = pren.length ? pren.reduce((a, d) => (d.v > a.v ? d : a)) : null;
+  const totPren = mine.filter((r) => r.stage !== 0).length;
+  const lista = sortRecent(st == null ? mine.filter((r) => r.stage !== 0) : mine.filter((r) => r.stage === st));
+  const statiPresenti = RIGHE_PR.filter((n) => mine.some((r) => r.stage === n));
+  return (
+    <Sheet onClose={onClose} wide>
+      <div className="prp">
+        <div className="prp-head">
+          <Avatar name={nome} size={58} />
+          <div className="prp-t"><h2>{nome}</h2><span className="muted-s">{s.active} prenotazioni in gioco · {s.totPax} pax</span></div>
+        </div>
+        <div className="prp-brief">
+          <span>In breve</span>
+          {bestP && bestP.v > 0 ? (
+            <p><b className="tl-cap">{MESI_LUNGHI[bestP.mo]}</b> il mese migliore: {bestP.v} prenotazioni, il {Math.round(bestP.v / Math.max(1, totPren) * 100)}% del totale.
+              {" "}Conversione complessiva {s.convPct}%: {s.confirmed} confermate{s.disdette ? `, ${s.disdette} disdette` : ""}.</p>
+          ) : <p>Ancora nessuna prenotazione con una data.</p>}
+        </div>
+        <div className="prp-kpi">
+          <div><b><Num n={s.active} /></b><span>in gioco</span></div>
+          <div><b><Num n={s.totPax} /></b><span>pax</span></div>
+          <div><b className="tx-green"><Num n={s.confirmed} /></b><span>confermate</span></div>
+          <div><b>{s.convPct}%</b><span>conversione</span></div>
+        </div>
+        <div className="prp-charts">
+          <section><h4>Prenotazioni mese per mese</h4><BarreMese dati={pren} unita="prenotazioni" /></section>
+          <section><h4>Conversione mese per mese</h4><BarreMese dati={conv} fmt={(v) => `${Math.round(v)}%`} /></section>
+        </div>
+        <section className="sh-block">
+          <h4>Le sue pratiche</h4>
+          <div className="stage-tabs">
+            <button className={`stab ${st == null ? "on" : ""}`} onClick={() => setSt(null)}>Tutte <b>{totPren}</b></button>
+            {statiPresenti.map((n) => (
+              <button key={n} className={`stab ${st === n ? "on" : ""}`} onClick={() => setSt(n)}>
+                <i style={{ background: stageOf(n).color }} />{stageOf(n).short} <b>{mine.filter((r) => r.stage === n).length}</b></button>
+            ))}
+          </div>
+          <div style={{ marginTop: 10 }}><RowList rows={lista} isAdmin={false} onOpen={onOpen} /></div>
+        </section>
+      </div>
+    </Sheet>
+  );
+}
+
 /* ---------------- SHEETS ---------------- */
 function Sheet({ onClose, wide, children }) {
   useEffect(() => {
@@ -1737,7 +1915,7 @@ select.season{appearance:none;-webkit-appearance:none;padding-right:28px;cursor:
 .scrim{position:fixed;inset:0;z-index:60;background:rgba(15,27,51,.42);display:flex;justify-content:flex-end;animation:fade .18s ease}
 @keyframes fade{from{opacity:0}}
 .sheet{position:relative;width:min(440px,100vw);height:100dvh;background:var(--surface);overflow-y:auto;padding:26px 24px 32px;animation:slideL .26s cubic-bezier(.2,.8,.2,1)}
-.sheet.wide{width:min(580px,100vw)}
+.sheet.wide{width:min(720px,100vw)}
 @keyframes slideL{from{transform:translateX(40px);opacity:.4}}
 .grab{display:none}
 .sheet-x{position:absolute;top:18px;right:18px;width:36px;height:36px;border-radius:12px;background:var(--bg);display:grid;place-items:center;color:var(--muted)}
@@ -1886,6 +2064,47 @@ select.season{appearance:none;-webkit-appearance:none;padding-right:28px;cursor:
 .tl-txt b{color:var(--ink);font-weight:700}
 .tl-cap{text-transform:capitalize}
 .tl-cod{font-size:11px;font-weight:700;color:var(--faint)}
+
+/* andamento PR */
+.apr{display:flex;flex-direction:column;gap:12px}
+.apr-row{display:grid;grid-template-columns:210px minmax(0,1fr);align-items:center;gap:14px}
+.apr-lab{display:flex;align-items:center;gap:8px;min-width:0}
+.apr-lab i{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.apr-lab b{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.apr-lab em{font-style:normal;font-size:12px;font-weight:800;color:var(--muted);margin-left:auto;background:var(--bg);border-radius:999px;padding:2px 8px}
+.apr-bar{display:flex;gap:2px;height:38px}
+.apr-seg{position:relative;min-width:6px;display:grid;place-items:center;font-size:13px;font-weight:800;border-radius:4px;transition:filter .13s,transform .13s;text-align:center;padding:0}
+.apr-seg:first-child{border-radius:8px 4px 4px 8px}.apr-seg:last-child{border-radius:4px 8px 8px 4px}.apr-seg:only-child{border-radius:8px}
+.apr-seg:hover{filter:brightness(1.08);transform:translateY(-1px)}
+.apr-tip{position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;font-size:12px;font-weight:600;white-space:nowrap;padding:6px 10px;border-radius:10px;pointer-events:none;opacity:0;transition:opacity .12s;z-index:5}
+.apr-tip b{font-weight:800}
+.apr-seg:hover .apr-tip,.apr-seg:focus-visible .apr-tip{opacity:1}
+.apr-leg{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+.apr-leg button,.apr-leg span{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--muted)}
+.apr-leg button:hover{color:var(--ink)}
+.apr-leg i{width:10px;height:10px;border-radius:3px}
+.apr-dot{width:14px;height:14px;border-radius:50%;flex-shrink:0}
+.apr-alt{width:100%}.apr-alt b{font-size:16px;font-weight:800}
+.prp-head{display:flex;align-items:center;gap:14px;padding-right:44px}
+.prp-t h2{font-size:24px;font-weight:800;text-transform:capitalize}
+.prp-brief{background:var(--osoft);border-radius:16px;padding:12px 14px;margin:16px 0 12px}
+.prp-brief span{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--orange)}
+.prp-brief p{font-size:14px;line-height:1.5;color:var(--oink);margin-top:3px}
+.prp-kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.prp-kpi div{background:var(--bg);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column}
+.prp-kpi b{font-size:24px;font-weight:800;letter-spacing:-.03em}.prp-kpi span{font-size:11px;font-weight:600;color:var(--muted)}
+.prp-charts{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}
+.prp-charts section{border:1px solid var(--line);border-radius:16px;padding:12px}
+.prp-charts h4{font-size:12px;font-weight:800;color:var(--muted);margin-bottom:8px}
+.bmese{display:flex;align-items:flex-end;gap:5px;height:150px}
+.bm{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%}
+.bm-v{font-size:10px;font-weight:800;color:var(--muted);height:13px;white-space:nowrap}
+.bm-c{flex:1;width:100%;max-width:30px;display:flex;align-items:flex-end;background:var(--bg);border-radius:7px;overflow:hidden}
+.bm-c span{width:100%;background:var(--orange2);border-radius:7px;animation:grow .7s cubic-bezier(.2,.8,.2,1) both;transform-origin:bottom}
+.bm.best .bm-c span{background:var(--violet)}.bm.best .bm-v{color:var(--violet)}
+.bm-l{font-size:9px;font-weight:700;color:var(--faint);white-space:nowrap}
+.sheet.wide .prp{padding-bottom:6px}
+.prp .stage-tabs{flex-wrap:wrap}
 /* responsive */
 @media(max-width:1280px){.dash{grid-template-columns:1fr}.rail{position:static;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));align-items:start}}
 @media(max-width:1100px){.kpis{grid-template-columns:repeat(2,1fr)}}
@@ -1933,6 +2152,8 @@ select.season{appearance:none;-webkit-appearance:none;padding-right:28px;cursor:
 .prank-n{font-size:60px}
 .ubar{flex-wrap:wrap}.btn-new{padding:12px 18px;width:100%;justify-content:center}
 .ustate em{display:none}
+.apr-row{grid-template-columns:1fr;gap:6px}.apr-bar{height:32px}.apr-seg{font-size:11px}
+.prp-charts{grid-template-columns:1fr}.prp-kpi{grid-template-columns:repeat(2,1fr)}
 .tl{padding:4px 10px 12px}.tl-dlabel{top:62px}.tl-row{align-items:flex-start;gap:9px}.tl-time{width:34px;padding-top:7px}.tl-row .spill{display:none}.tl-row+.tl-row::before{left:58px}
 .tab{font-size:10px;padding:7px 2px}
 }
