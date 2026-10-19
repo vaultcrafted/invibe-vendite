@@ -14,10 +14,17 @@
  *      FUNNEL_SHEET_ID        = 1mMjK6kugD94eE2-OaazISk0c3b1CxyFUHbe8C5Na9bo
  *      FUNNEL_TAB             = Bloccaposti estate 2026      (facoltativa)
  *
+ *  PIU' FOGLI (es. Bloccaposti 2026 + Bloccaposti 2027)
+ *    Proprietà FUNNEL_SHEETS, una riga per foglio:  ID_DEL_FOGLIO | Nome scheda
+ *    Se c'è, vince su FUNNEL_SHEET_ID / FUNNEL_TAB. Il nome scheda si può omettere:
+ *    allora prende la prima scheda che ha le colonne Canale e Funnel.
+ *    Se lo stesso codice capogruppo è in due fogli, vince l'ultimo dell'elenco.
+ *    Comodo: aggiungiFoglioVendite('ID o link del foglio', 'Nome scheda') lo aggiunge da solo.
+ *
  *  USO
  *    syncVenditeAnteprima()  → SOLA LETTURA. Dice cosa cambierebbe. Lanciala SEMPRE prima.
  *    syncVendite()           → scrive davvero su Supabase.
- *    installaTriggerVendite()→ fa partire syncVendite da solo ogni 15 minuti.
+ *    installaTriggerVendite()→ fa partire syncVendite da solo ogni 30 minuti.
  *    rimuoviTriggerVendite() → spegne l'automatismo.
  */
 
@@ -60,20 +67,58 @@ function _dataTxt_(v){
   return String(v || '').trim().slice(0, 10);
 }
 
+// Elenco dei fogli da leggere: FUNNEL_SHEETS (una riga "id | scheda") oppure il vecchio FUNNEL_SHEET_ID.
+function _fogli_(){
+  var lista = _cfg_('FUNNEL_SHEETS', true);
+  if (lista){
+    return lista.split(/\n|;/).map(function(r){ return r.trim(); }).filter(String).map(function(r){
+      var p = r.split('|'); return { id: _idDaLink_(p[0]), tab: (p[1] || '').trim() };
+    });
+  }
+  return [{ id: _cfg_('FUNNEL_SHEET_ID'), tab: _cfg_('FUNNEL_TAB', true) || IV_TAB_DEFAULT }];
+}
+function _idDaLink_(x){ var m = String(x).match(/\/d\/([a-zA-Z0-9_-]{20,})/); return (m ? m[1] : String(x)).trim(); }
+function _intestazioni_(values){
+  for (var i = 0; i < Math.min(values.length, 15); i++){
+    var row = values[i].map(_norm_);
+    if (row.indexOf('canale') > -1 && row.indexOf('funnel') > -1) return { hdr: i, H: row };
+  }
+  return null;
+}
+
+// Legge tutti i fogli e unisce: per lo stesso codice vince l'ultimo foglio dell'elenco.
 function _leggiFunnel_(prOk){
-  var ss = SpreadsheetApp.openById(_cfg_('FUNNEL_SHEET_ID'));
-  var tabName = _cfg_('FUNNEL_TAB', true) || IV_TAB_DEFAULT;
-  var sh = ss.getSheetByName(tabName);
-  if (!sh) throw new Error('Scheda "' + tabName + '" non trovata nel foglio.');
+  var map = {}, scarti = { senzaCodice: 0, canaleNonPR: 0, senzaFunnel: 0 }, nomi = [];
+  _fogli_().forEach(function(f){
+    var r = _leggiFoglio_(prOk, f.id, f.tab);
+    nomi.push(r.tab + ' (' + r.rows.length + ')');
+    r.rows.forEach(function(o){ map[o.cod] = o; });
+    Object.keys(scarti).forEach(function(k){ scarti[k] += r.scarti[k]; });
+  });
+  return { tab: nomi.join(' + '), rows: Object.keys(map).map(function(k){ return map[k]; }), scarti: scarti };
+}
+
+function _leggiFoglio_(prOk, id, tabName){
+  var ss = SpreadsheetApp.openById(id);
+  var sh, found = null;
+  if (tabName){
+    sh = ss.getSheetByName(tabName);
+    if (!sh) throw new Error('Scheda "' + tabName + '" non trovata nel foglio "' + ss.getName() + '".');
+  } else {
+    var tutte = ss.getSheets();
+    for (var t = 0; t < tutte.length && !sh; t++){
+      var v = tutte[t].getRange(1, 1, Math.min(15, tutte[t].getMaxRows()), tutte[t].getMaxColumns()).getValues();
+      if (_intestazioni_(v)){ sh = tutte[t]; }
+    }
+    if (!sh) throw new Error('Nel foglio "' + ss.getName() + '" nessuna scheda ha le colonne Canale e Funnel.');
+    tabName = sh.getName();
+  }
   var values = sh.getDataRange().getValues();
 
   // riga intestazioni: la prima che contiene sia "canale" che "funnel"
-  var hdr = -1, H = [];
-  for (var i = 0; i < Math.min(values.length, 15); i++){
-    var row = values[i].map(_norm_);
-    if (row.indexOf('canale') > -1 && row.indexOf('funnel') > -1){ hdr = i; H = row; break; }
-  }
-  if (hdr === -1) throw new Error('Nella scheda "' + tabName + '" non trovo le intestazioni Canale e Funnel.');
+  found = _intestazioni_(values);
+  if (!found) throw new Error('Nella scheda "' + tabName + '" non trovo le intestazioni Canale e Funnel.');
+  var hdr = found.hdr, H = found.H;
 
   var esatta  = function(n){ return H.indexOf(n); };
   var inizia  = function(p){ for (var c = 0; c < H.length; c++) if (H[c].indexOf(p) === 0) return c; return -1; };
@@ -122,7 +167,7 @@ function _leggiFunnel_(prOk){
       data_richiesta: cData > -1 ? _dataTxt_(v[cData]) : ''
     };
   }
-  return { tab: tabName, rows: Object.keys(map).map(function(k){ return map[k]; }), scarti: scarti };
+  return { tab: ss.getName() + ' / ' + tabName, rows: Object.keys(map).map(function(k){ return map[k]; }), scarti: scarti };
 }
 
 function syncVenditeAnteprima(){
@@ -142,7 +187,7 @@ function syncVenditeAnteprima(){
   var perPR = {}; res.rows.forEach(function(o){ perPR[o.canale] = (perPR[o.canale] || 0) + 1; });
   var top = Object.keys(perPR).sort(function(a, b){ return perPR[b] - perPR[a]; }).map(function(k){ return k + ' ' + perPR[k]; });
 
-  Logger.log('Scheda: %s', res.tab);
+  Logger.log('Fogli letti: %s', res.tab);
   Logger.log('Capigruppo validi nel foglio: %s', res.rows.length);
   Logger.log('  nuovi da inserire: %s | da aggiornare: %s | già uguali: %s', nuovi, cambiati, uguali);
   if (esempi.length) Logger.log('  esempi di aggiornamenti: \n    ' + esempi.join('\n    '));
@@ -177,9 +222,23 @@ function syncVendite(){
 
 function installaTriggerVendite(){
   rimuoviTriggerVendite();
-  ScriptApp.newTrigger('syncVendite').timeBased().everyMinutes(15).create();
-  Logger.log('Automatismo attivo: syncVendite ogni 15 minuti.');
+  ScriptApp.newTrigger('syncVendite').timeBased().everyMinutes(30).create();
+  Logger.log('Automatismo attivo: syncVendite ogni 30 minuti.');
 }
 function rimuoviTriggerVendite(){
   ScriptApp.getProjectTriggers().forEach(function(t){ if (t.getHandlerFunction() === 'syncVendite') ScriptApp.deleteTrigger(t); });
+}
+
+// Aggiunge un foglio all'elenco (link o ID). Se l'elenco non esiste ancora, ci mette prima il foglio attuale.
+function aggiungiFoglioVendite(idOLink, scheda){
+  if (!idOLink) throw new Error('Passa il link o l\'ID del foglio.');
+  var props = PropertiesService.getScriptProperties();
+  var righe = props.getProperty('FUNNEL_SHEETS');
+  if (!righe){
+    righe = props.getProperty('FUNNEL_SHEET_ID') + ' | ' + (props.getProperty('FUNNEL_TAB') || IV_TAB_DEFAULT);
+  }
+  var id = _idDaLink_(idOLink);
+  if (righe.indexOf(id) === -1) righe += '\n' + id + ' | ' + (scheda || '');
+  props.setProperty('FUNNEL_SHEETS', righe);
+  Logger.log('Fogli letti dal sync:\n%s', righe);
 }

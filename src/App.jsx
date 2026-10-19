@@ -318,7 +318,9 @@ function Panel({ dl }) {
     cronologia: "Cronologia",
     profilo: isAdmin ? "Il tuo profilo" : "La tua area",
   };
+  const prNomi = useMemo(() => { const m = {}; (accounts || []).forEach((a) => { if (a.codice_pr) m[a.codice_pr] = a.nome; }); return m; }, [accounts]);
   return (
+    <PrNomi.Provider value={prNomi}>
     <div className="shell">
       <aside className="side">
         <div className="side-top"><Logo /></div>
@@ -359,7 +361,7 @@ function Panel({ dl }) {
           </div>
         </header>
         <div className="content">
-          {isAdmin && lastSync && Date.now() - lastSync.getTime() > 60 * 60000 && (
+          {isAdmin && lastSync && Date.now() - lastSync.getTime() > 90 * 60000 && (
             <div className="sync-alert" role="alert">
               <b>Il Bloccaposti non si aggiorna da {Math.round((Date.now() - lastSync.getTime()) / 3600000)} ore.</b>
               <span>Controlla lo script "Sync Vendite Invibe" (account bobo.invibe) → Esecuzioni: l'ultimo aggiornamento è del {lastSync.toLocaleString("it-IT", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}.</span>
@@ -384,6 +386,7 @@ function Panel({ dl }) {
       {sel && <LeadSheet lead={sel} isAdmin={isAdmin} onClose={() => setSel(null)} />}
       {user.cambio_password && <PrimoAccesso user={user} api={dl.api} updateUser={dl.updateUser} logout={logout} />}
     </div>
+    </PrNomi.Provider>
   );
 }
 
@@ -615,13 +618,53 @@ function StageBars({ stats, onStage, selected }) {
 }
 
 /* ---------------- FUNNEL ---------------- */
-function FunnelView({ leads, isAdmin, onOpen }) {
+// nomi dei PR per codice (dalle utenze), usati in tutta l'app dell'ufficio
+const PrNomi = React.createContext({});
+const etichettaPr = (nomi, c) => (nomi[c] ? `${nomi[c]} · ${c}` : c);
+function PrSelect({ leads, value, onChange }) {
+  const nomi = React.useContext(PrNomi);
+  const opts = useMemo(() => {
+    const m = {}; leads.forEach((r) => { if (r.can) m[r.can] = (m[r.can] || 0) + 1; });
+    return Object.entries(m).sort((a, b) => (nomi[a[0]] || a[0]).localeCompare(nomi[b[0]] || b[0]));
+  }, [leads, nomi]);
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} aria-label="Filtra per PR">
+      <option value="">Tutti i PR</option>
+      {opts.map(([c, n]) => <option key={c} value={c}>{etichettaPr(nomi, c)} ({n})</option>)}
+    </select>
+  );
+}
+function PerPr({ rows, onPick }) {
+  const nomi = React.useContext(PrNomi);
+  const list = useMemo(() => {
+    const m = {}; rows.forEach((r) => { const k = r.can || "—"; m[k] = m[k] || { c: k, n: 0, pax: 0 }; m[k].n++; m[k].pax += r.pax; });
+    return Object.values(m).sort((a, b) => b.n - a.n);
+  }, [rows]);
+  const max = Math.max(1, ...list.map((d) => d.n));
+  return (
+    <div className="perpr">
+      {list.slice(0, 15).map((d) => (
+        <button key={d.c} className="perpr-row" onClick={() => onPick(d.c)}>
+          <span className="perpr-l">{nomi[d.c] || d.c}<em>{d.c}</em></span>
+          <span className="perpr-t"><span style={{ width: `${d.n / max * 100}%` }} /></span>
+          <b>{d.n}</b>
+        </button>
+      ))}
+      {list.length > 15 && <div className="more">e altri {list.length - 15} PR: usa il filtro in alto</div>}
+    </div>
+  );
+}
+function FunnelView({ leads: tutti, isAdmin, onOpen }) {
+  const [pr, setPr] = useState("");
+  const leads = useMemo(() => (pr ? tutti.filter((r) => r.can === pr) : tutti), [tutti, pr]);
   const [stage, setStage] = useState(null);
   const s = useMemo(() => computeStats(leads), [leads]);
   const rows = useMemo(() => sortRecent(stage == null ? leads : leads.filter((r) => r.stage === stage)), [leads, stage]);
   if (leads.length === 0) return <div className="none pad">Nessuna prenotazione.</div>;
   return (
     <div className="stack">
+      {isAdmin && <div className="frow"><PrSelect leads={tutti} value={pr} onChange={setPr} />
+        {pr && <button className="clear" onClick={() => setPr("")}>Tutti i PR</button>}</div>}
       <div className="stage-tabs">
         <button className={`stab ${stage == null ? "on" : ""}`} onClick={() => setStage(null)}>Tutti <b>{leads.length}</b></button>
         {STAGES.filter((st) => s.byStage[st.n].groups > 0).map((st) => (
@@ -635,6 +678,13 @@ function FunnelView({ leads, isAdmin, onOpen }) {
         <section className="card hide-mob">
           <div className="block-head"><h3>Stadi</h3></div>
           <StageBars stats={s} selected={stage} onStage={(n) => setStage(stage === n ? null : n)} />
+          {isAdmin && !pr && (
+            <>
+              <div className="block-head" style={{ marginTop: 18 }}><h3>Chi ha fatto prenotare</h3>
+                <span className="muted-s">{stage != null ? stageOf(stage).short : "tutti gli stati"}</span></div>
+              <PerPr rows={rows} onPick={setPr} />
+            </>
+          )}
         </section>
         <section className="card">
           <div className="block-head"><h3>{rows.length} {rows.length === 1 ? "prenotazione" : "prenotazioni"}</h3>
@@ -648,8 +698,9 @@ function FunnelView({ leads, isAdmin, onOpen }) {
 
 /* ---------------- PRENOTAZIONI ---------------- */
 function Prenotazioni({ leads, isAdmin, initial, onOpen }) {
-  const blank = { meta: "", turno: "", stage: null, stages: null, label: "", q: "" };
-  const fromJump = (j) => ({ ...blank, meta: j?.meta ?? "", stage: j?.stage ?? null, stages: j?.stages ?? null, label: j?.label ?? "" });
+  const nomi = React.useContext(PrNomi);
+  const blank = { meta: "", turno: "", pr: "", stage: null, stages: null, label: "", q: "" };
+  const fromJump = (j) => ({ ...blank, meta: j?.meta ?? "", pr: j?.pr ?? "", stage: j?.stage ?? null, stages: j?.stages ?? null, label: j?.label ?? "" });
   const [f, setF] = useState(fromJump(initial));
   useEffect(() => { if (initial) setF(fromJump(initial)); }, [initial]);
   const turni = useMemo(() => [...new Set(leads.map((r) => r.turno).filter(Boolean))].sort(), [leads]);
@@ -657,19 +708,21 @@ function Prenotazioni({ leads, isAdmin, initial, onOpen }) {
   const rows = useMemo(() => (perFermo ? (a) => [...a].sort((x, y) => (giorniFermo(y)?.gg ?? -1) - (giorniFermo(x)?.gg ?? -1)) : sortRecent)(leads.filter((r) => {
     if (f.meta && normMeta(r.meta) !== f.meta) return false;
     if (f.turno && r.turno !== f.turno) return false;
+    if (f.pr && r.can !== f.pr) return false;
     if (f.stages && f.stages.length) { if (!f.stages.includes(r.stage)) return false; }
     else if (f.stage != null && r.stage !== f.stage) return false;
-    if (f.q) { const q = f.q.toLowerCase(); if (!(`${r.cod} ${r.nome} ${r.can} ${r.city}`.toLowerCase().includes(q))) return false; }
+    if (f.q) { const q = f.q.toLowerCase(); if (!(`${r.cod} ${r.nome} ${r.can} ${nomi[r.can] || ""} ${r.city}`.toLowerCase().includes(q))) return false; }
     return true;
-  })), [leads, f, perFermo]);
-  const dirty = f.meta || f.turno || f.stage != null || (f.stages && f.stages.length) || f.q;
+  })), [leads, f, perFermo, nomi]);
+  const dirty = f.meta || f.turno || f.pr || f.stage != null || (f.stages && f.stages.length) || f.q;
   if (leads.length === 0) return <div className="none pad">Nessuna prenotazione.</div>;
   return (
     <div className="stack">
       <div className="filters">
-        <div className="search"><Search size={16} /><input placeholder="Cerca nome, codice o città"
+        <div className="search"><Search size={16} /><input placeholder={isAdmin ? "Cerca nome, codice, città o PR" : "Cerca nome, codice o città"}
           value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} /></div>
         <div className="frow">
+          {isAdmin && <PrSelect leads={leads} value={f.pr} onChange={(v) => setF({ ...f, pr: v })} />}
           <select value={f.meta} onChange={(e) => setF({ ...f, meta: e.target.value })}>
             <option value="">Tutte le mete</option>{META.map((m) => <option key={m.key} value={m.key}>{m.short}</option>)}</select>
           <select value={f.turno} onChange={(e) => setF({ ...f, turno: e.target.value })}>
@@ -693,6 +746,7 @@ function Prenotazioni({ leads, isAdmin, initial, onOpen }) {
   );
 }
 function RowList({ rows, isAdmin, onOpen, showFermo }) {
+  const nomi = React.useContext(PrNomi);
   if (rows.length === 0) return <div className="none pad">Nessuna prenotazione con questi filtri.</div>;
   return (
     <div className="rows">
@@ -704,7 +758,7 @@ function RowList({ rows, isAdmin, onOpen, showFermo }) {
             <span className="row-meta">
               <MetaChip meta={r.meta} />
               {r.turno && <span className="tchip">{r.turno}</span>}
-              {isAdmin && r.can && <span className="tchip pr">{r.can}</span>}
+              {isAdmin && r.can && <span className="tchip pr">{etichettaPr(nomi, r.can)}</span>}
               {showFermo && giorniFermo(r) && <span className="tchip fermo">fermo {testoFermo(giorniFermo(r))}</span>}
             </span>
           </span>
@@ -2105,6 +2159,16 @@ select.season{appearance:none;-webkit-appearance:none;padding-right:28px;cursor:
 .bm-l{font-size:9px;font-weight:700;color:var(--faint);white-space:nowrap}
 .sheet.wide .prp{padding-bottom:6px}
 .prp .stage-tabs{flex-wrap:wrap}
+
+/* per PR nel funnel */
+.perpr{display:flex;flex-direction:column;gap:2px}
+.perpr-row{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) 34px;align-items:center;gap:10px;padding:7px 8px;border-radius:10px;width:100%}
+.perpr-row:hover{background:var(--bg)}
+.perpr-l{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.perpr-l em{font-style:normal;font-size:10px;font-weight:800;color:var(--violet);margin-left:6px}
+.perpr-t{height:6px;background:var(--bg);border-radius:99px;overflow:hidden}
+.perpr-t span{display:block;height:100%;background:var(--violet2);border-radius:99px}
+.perpr-row b{font-size:14px;font-weight:800;text-align:right}
 /* responsive */
 @media(max-width:1280px){.dash{grid-template-columns:1fr}.rail{position:static;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));align-items:start}}
 @media(max-width:1100px){.kpis{grid-template-columns:repeat(2,1fr)}}
@@ -2157,6 +2221,6 @@ select.season{appearance:none;-webkit-appearance:none;padding-right:28px;cursor:
 .tl{padding:4px 10px 12px}.tl-dlabel{top:62px}.tl-row{align-items:flex-start;gap:9px}.tl-time{width:34px;padding-top:7px}.tl-row .spill{display:none}.tl-row+.tl-row::before{left:58px}
 .tab{font-size:10px;padding:7px 2px}
 }
-@media(max-width:420px){.hero-top{flex-direction:column}.hero-month{flex-direction:row;align-items:baseline;gap:8px;width:100%;justify-content:center}.row-meta .tchip.pr{display:none}}
+@media(max-width:420px){.hero-top{flex-direction:column}.hero-month{flex-direction:row;align-items:baseline;gap:8px;width:100%;justify-content:center}.row-meta .tchip:not(.pr):not(.fermo){display:none}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 `;
